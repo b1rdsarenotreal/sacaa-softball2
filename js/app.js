@@ -1,8 +1,8 @@
 import { generateSchedule } from './engine/schedule.js';
 import { computeLeagueAverages, simulateGame } from './engine/sim.js';
-import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers } from './engine/roster.js';
+import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers, computeProgramPrestige } from './engine/roster.js';
 import { computeStandings, standingsByConference, overallStandings } from './engine/standings.js';
-import { computeRankings, top25 } from './engine/rankings.js';
+import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rankings.js';
 import { runConferenceTournament, selectField, runRegionals, runWorldSeries, roundLabel } from './engine/postseason.js';
 
 const STORAGE_KEY = 'sacaa-season-v2'; // bumped from v1: roster shape changed from stat-based to ratings-based
@@ -13,6 +13,7 @@ let TEAMS = [];
 let TEAMS_BY_NAME = {};
 let CONFERENCES = {};
 let PROGRAM_TIERS = {};
+let PROGRAM_PRESTIGE = {};
 let LEAGUE = null;
 let state = null;
 let customLogos = {};
@@ -117,6 +118,7 @@ async function loadTeams() {
   CONFERENCES = await confRes.json();
   TEAMS_BY_NAME = Object.fromEntries(TEAMS.map((t) => [t.name, t]));
   PROGRAM_TIERS = computeProgramTiers(TEAMS);
+  PROGRAM_PRESTIGE = computeProgramPrestige(TEAMS);
   LEAGUE = computeLeagueAverages(TEAMS);
 }
 
@@ -352,7 +354,7 @@ function computeSeasonStatsForTeam(teamName) {
       result.boxscore[side].batting.forEach((b) => {
         if (!battingTotals[b.playerId]) {
           battingTotals[b.playerId] = {
-            name: b.name, class: b.class, position: b.position, battingOrder: b.battingOrder, twoWay: b.twoWay,
+            name: b.name, number: b.number, class: b.class, position: b.position, battingOrder: b.battingOrder, twoWay: b.twoWay,
             ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, doubles: 0, triples: 0, hr: 0,
           };
         }
@@ -362,7 +364,7 @@ function computeSeasonStatsForTeam(teamName) {
       });
       result.boxscore[side].pitching.forEach((p) => {
         if (!pitchingTotals[p.playerId]) {
-          pitchingTotals[p.playerId] = { name: p.name, class: p.class, role: p.role, twoWay: p.twoWay, outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0 };
+          pitchingTotals[p.playerId] = { name: p.name, number: p.number, class: p.class, role: p.role, twoWay: p.twoWay, outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0 };
         }
         const t = pitchingTotals[p.playerId];
         t.outs += p.outs; t.h += p.h; t.r += p.r; t.er += p.er; t.bb += p.bb; t.k += p.k;
@@ -520,14 +522,19 @@ function renderStandings() {
 }
 
 function renderRankings() {
-  const list = document.getElementById('rankingsList');
-  list.innerHTML = '';
-  const rankings = computeRankings(TEAMS, state.games);
+  const rpiList = document.getElementById('rankingsList');
+  const pollList = document.getElementById('coachesPollList');
+  rpiList.innerHTML = '';
+  pollList.innerHTML = '';
   const played = state.games.some((g) => g.played);
   if (!played) {
-    list.innerHTML = '<p class="view-note">Simulate a week to generate the first poll.</p>';
+    const note = '<p class="view-note">Simulate a week to generate the first poll.</p>';
+    rpiList.innerHTML = note;
+    pollList.innerHTML = note;
     return;
   }
+
+  const rankings = computeRankings(TEAMS, state.games);
   top25(rankings).forEach((r) => {
     const li = document.createElement('li');
     li.className = 'rank-row';
@@ -537,7 +544,21 @@ function renderRankings() {
       <span class="rank-record">${r.record}</span>
       <span class="rank-rpi">${r.rpi.toFixed(3)}</span>
     `;
-    list.appendChild(li);
+    rpiList.appendChild(li);
+  });
+
+  const standings = computeStandings(TEAMS, state.games);
+  const poll = computeCoachesPoll(standings, PROGRAM_PRESTIGE, state.seed);
+  top15(poll).forEach((r) => {
+    const li = document.createElement('li');
+    li.className = 'rank-row';
+    li.innerHTML = `
+      <span class="rank-num">${r.rank}</span>
+      <span class="rank-team">${teamLink(r.name)}<span class="rank-conf">${r.conference}</span></span>
+      <span class="rank-record">${r.record}</span>
+      <span class="rank-rpi"></span>
+    `;
+    pollList.appendChild(li);
   });
 }
 
@@ -727,18 +748,19 @@ function renderTeams() {
 }
 
 function teamBadge(name, size = 20, extraClass = '') {
+  const width = Math.round(size * 1.4);
   const customLogo = customLogos[name];
   if (customLogo) {
-    return `<img class="team-badge ${extraClass}" width="${size}" height="${size}" src="${customLogo}" alt="${name} logo">`;
+    return `<img class="team-badge ${extraClass}" width="${width}" height="${size}" src="${customLogo}" alt="${name} logo">`;
   }
   const team = TEAMS_BY_NAME[name];
   if (!team) return '';
   const colors = team.colors || { primary: '#0F3324', secondary: '#D7E600' };
   const initials = (team.abbr || name.slice(0, 3)).slice(0, 3);
-  const fontSize = initials.length >= 3 ? 30 : 40;
-  return `<svg class="team-badge ${extraClass}" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
-    <circle cx="50" cy="50" r="46" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
-    <text x="50" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
+  const fontSize = initials.length >= 3 ? 40 : 52;
+  return `<svg class="team-badge ${extraClass}" width="${width}" height="${size}" viewBox="0 0 140 100" aria-hidden="true">
+    <rect x="4" y="4" width="132" height="92" rx="14" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
+    <text x="70" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
   </svg>`;
 }
 
@@ -792,7 +814,7 @@ function openTeamModal(name) {
 
   const battingRows = seasonStats.batting.map((b) => `
     <tr>
-      <td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+      <td>#${b.number}</td><td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
       <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td>
       <td>${b.hr}</td><td>${b.ab > 0 ? (b.h / b.ab).toFixed(3).replace(/^0/, '') : '.000'}</td>
     </tr>`).join('');
@@ -803,7 +825,7 @@ function openTeamModal(name) {
     const whip = p.outs > 0 ? ((p.bb + p.h) / (p.outs / 3)).toFixed(2) : '0.00';
     return `
     <tr>
-      <td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
+      <td>#${p.number}</td><td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
       <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td>
     </tr>`;
   }).join('');
@@ -812,12 +834,12 @@ function openTeamModal(name) {
   // yet) -- lineup + bench hitters, then the full pitching staff.
   const rosterHitterRows = [...roster.lineup, ...roster.bench].map((p) => `
     <tr>
-      <td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
+      <td>#${p.number}</td><td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
       <td>${p.ratings.contact}</td><td>${p.ratings.power}</td><td>${p.ratings.eye}</td>
     </tr>`).join('');
   const rosterPitcherRows = roster.pitchers.map((p) => `
     <tr>
-      <td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
+      <td>#${p.number}</td><td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
       <td>${p.ratings.stuff}</td><td>${p.ratings.control}</td><td>${p.ratings.movement}</td>
     </tr>`).join('');
 
@@ -852,11 +874,11 @@ function openTeamModal(name) {
     <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
     <div class="tp-roster-tables">
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>Hitter</th><th>Cl</th><th>Pos</th><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>
+        <thead><tr><th>#</th><th>Hitter</th><th>Cl</th><th>Pos</th><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>
         <tbody>${rosterHitterRows}</tbody>
       </table>
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>Pitcher</th><th>Cl</th><th>Role</th><th>Stuff</th><th>Control</th><th>Movement</th></tr></thead>
+        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>Role</th><th>Stuff</th><th>Control</th><th>Movement</th></tr></thead>
         <tbody>${rosterPitcherRows}</tbody>
       </table>
     </div>
@@ -865,11 +887,11 @@ function openTeamModal(name) {
     <div class="tp-schedule-title">Season Stats</div>
     <div class="tp-roster-tables">
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th></tr></thead>
+        <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th></tr></thead>
         <tbody>${battingRows}</tbody>
       </table>
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th></tr></thead>
+        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th></tr></thead>
         <tbody>${pitchingRows}</tbody>
       </table>
     </div>
@@ -888,14 +910,14 @@ function boxScoreSectionHTML(result, awayName, homeName) {
   function battingTable(side, teamName) {
     const rows = result.boxscore[side].batting.map((b) => `
       <tr>
-        <td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+        <td>#${b.number}</td><td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
         <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td>
       </tr>`).join('');
     return `
       <div>
         <div class="bs-team-title">${teamLink(teamName)}</div>
         <table class="standings-table tp-mini-table">
-          <thead><tr><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th></tr></thead>
+          <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
@@ -904,12 +926,12 @@ function boxScoreSectionHTML(result, awayName, homeName) {
   function pitchingTable(side) {
     const rows = result.boxscore[side].pitching.map((p) => `
       <tr>
-        <td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.ip}</td><td>${p.h}</td><td>${p.r}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td>
+        <td>#${p.number}</td><td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.ip}</td><td>${p.h}</td><td>${p.r}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td>
         <td>${p.decision}</td>
       </tr>`).join('');
     return `
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>Pitcher</th><th>Cl</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
   }

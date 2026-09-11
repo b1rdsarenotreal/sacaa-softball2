@@ -295,6 +295,7 @@ function finalizeBattingBox(box) {
   return Object.values(box).map((b) => ({
     playerId: b.player.id,
     name: b.player.name,
+    number: b.player.number,
     class: b.player.class,
     position: b.player.position,
     battingOrder: b.player.battingOrder,
@@ -308,6 +309,7 @@ function finalizePitchingBox(appearances) {
   return appearances.map((a) => ({
     playerId: a.pitcher.id,
     name: a.pitcher.name,
+    number: a.pitcher.number,
     class: a.pitcher.class,
     role: a.pitcher.role,
     twoWay: !!a.pitcher.twoWay,

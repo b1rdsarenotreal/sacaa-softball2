@@ -259,6 +259,20 @@ export function computeProgramTiers(teams) {
   return tiers;
 }
 
+// Raw 0-1 "historical program strength" per team (average of the batting and
+// pitching percentiles above), for anything that wants a continuous prestige
+// value rather than a tier label -- e.g. a coaches-poll-style ranking that
+// leans on brand-name reputation as well as this season's results.
+export function computeProgramPrestige(teams) {
+  const percentiles = computeHistoricalPercentiles(teams);
+  const prestige = {};
+  teams.forEach((t) => {
+    const p = percentiles[t.name];
+    prestige[t.name] = (p.battingPercentile + p.pitchingPercentile) / 2;
+  });
+  return prestige;
+}
+
 function genHitterRatings(battingTalent, rng) {
   return {
     contact: Math.round(clamp(battingTalent + noise(rng) * 14, 20, 80)),
@@ -333,15 +347,19 @@ function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames
   const starters = ranked.slice(0, 9);
   const benchPool = ranked.slice(9);
 
-  // Build the batting order: best eye/contact leads off, best power in the
-  // heart of the order, the rest fill out the bottom.
-  const byEye = [...starters].sort((a, b) => (b.ratings.eye + b.ratings.contact) - (a.ratings.eye + a.ratings.contact));
-  const leadoff = byEye.slice(0, 2);
+  // Build the batting order: better hitters generally bat higher, but the
+  // exact slotting isn't a rigid formula -- jitter the ranking so the order
+  // varies noticeably team to team and game to game rather than always
+  // being "the two best-OBP hitters lead off, best power bats 3-4-5."
+  const jitterScore = (base) => base + noise(rng) * 13;
+  const eyeScored = starters.map((p) => ({ p, score: jitterScore(p.ratings.eye + p.ratings.contact) }));
+  const leadoff = eyeScored.sort((a, b) => b.score - a.score).slice(0, 2).map((x) => x.p);
   const remaining1 = starters.filter((p) => !leadoff.includes(p));
-  const byPower = [...remaining1].sort((a, b) => b.ratings.power - a.ratings.power);
-  const heart = byPower.slice(0, 3);
+  const powerScored = remaining1.map((p) => ({ p, score: jitterScore(p.ratings.power) }));
+  const heart = powerScored.sort((a, b) => b.score - a.score).slice(0, 3).map((x) => x.p);
   const remaining2 = remaining1.filter((p) => !heart.includes(p));
-  const rest = [...remaining2].sort((a, b) => b.ratings.contact - a.ratings.contact);
+  const restScored = remaining2.map((p) => ({ p, score: jitterScore(p.ratings.contact) }));
+  const rest = restScored.sort((a, b) => b.score - a.score).map((x) => x.p);
 
   const lineupOrder = [...leadoff, ...heart, ...rest];
   const lineup = lineupOrder.map((p, i) => ({
@@ -367,6 +385,44 @@ function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames
   return { lineup, bench };
 }
 
+// Jersey numbers, 0-99. Weighted so lower/more traditionally-common numbers
+// get handed out first, but every number in the range is possible.
+function weightedNumberPool(rng) {
+  const remaining = Array.from({ length: 100 }, (_, i) => i);
+  const weights = remaining.map((n) => Math.max(1, 100 - n));
+  const pool = [];
+  while (remaining.length) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = rng() * total;
+    let idx = 0;
+    for (; idx < remaining.length - 1; idx++) {
+      r -= weights[idx];
+      if (r <= 0) break;
+    }
+    pool.push(remaining[idx]);
+    remaining.splice(idx, 1);
+    weights.splice(idx, 1);
+  }
+  return pool;
+}
+
+// Two-way players appear as separate object instances in the lineup/bench
+// list and the pitching-staff list (same person, same `id`, different
+// object) -- give every instance of a given id the same number.
+function assignJerseyNumbers(allPlayerInstances, rng) {
+  const byId = new Map();
+  allPlayerInstances.forEach((p) => {
+    if (!byId.has(p.id)) byId.set(p.id, []);
+    byId.get(p.id).push(p);
+  });
+  const pool = weightedNumberPool(rng).slice(0, byId.size);
+  let i = 0;
+  byId.forEach((instances) => {
+    const num = pool[i++];
+    instances.forEach((inst) => { inst.number = num; });
+  });
+}
+
 export function generateRosters(teams, seed = 1) {
   const rng = mulberry32(seed);
   const talents = computeTeamTalents(teams);
@@ -376,6 +432,7 @@ export function generateRosters(teams, seed = 1) {
     const teamTalents = talents[team.name];
     const { pitchers, hitterCount } = buildPitchingStaff(team, teamTalents, rng, usedNames);
     const { lineup, bench } = buildRosterPlayers(team, teamTalents, hitterCount, pitchers, rng, usedNames);
+    assignJerseyNumbers([...lineup, ...bench, ...pitchers], rng);
     rosters[team.name] = { team: team.name, lineup, bench, pitchers };
   });
   return rosters;

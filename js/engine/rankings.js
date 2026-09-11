@@ -95,3 +95,47 @@ function recordFor(games, teamName) {
 export function top25(rankings) {
   return rankings.slice(0, 25);
 }
+
+// A "coaches poll"-style ranking -- the more familiar, human-voted
+// counterpart to RPI. Real coaches/media polls are looser about
+// strength-of-schedule chains than a computer ranking and lean more on raw
+// win%, how a team is playing right now, and how big a program's
+// reputation is; a blue-blood having a mediocre year still tends to get
+// more benefit of the doubt than RPI alone would give it. `standingsRows`
+// is standings.js's computeStandings() output (already has win% and a
+// last-10 log); `prestige` is roster.js's computeProgramPrestige().
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function computeCoachesPoll(standingsRows, prestige, seed = 1) {
+  const rng = mulberry32(seed);
+  const scored = standingsRows.map((row) => {
+    const wp = row.pct;
+    const last10 = row.last10 || [];
+    const last10Pct = last10.length > 0 ? last10.filter((r) => r === 'W').length / last10.length : wp;
+    const streakBonus = Math.max(-0.04, Math.min(0.04, (row.streak || 0) * 0.006));
+    const prestigeScore = prestige[row.name] ?? 0.5;
+    const voterNoise = (rng() - 0.5) * 0.025; // human polls aren't perfectly consistent
+    const score = 0.40 * wp + 0.18 * last10Pct + 0.32 * prestigeScore + streakBonus + voterNoise;
+    return {
+      name: row.name,
+      conference: row.conference,
+      record: `${row.wins}-${row.losses}`,
+      score,
+    };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  scored.forEach((row, i) => { row.rank = i + 1; });
+  return scored;
+}
+
+export function top15(poll) {
+  return poll.slice(0, 15);
+}
