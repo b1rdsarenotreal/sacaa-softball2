@@ -91,7 +91,11 @@ export function runConferenceTournament(conferenceStandingRows, teamsByName, ros
     const awayGameRoster = buildGameRoster(away.name, away.roster, away.team, nextStarter(away));
     const result = simulateGame(awayGameRoster, homeGameRoster, league, seed * 1000 + g++);
     const winner = result.winner === 'home' ? home : away;
-    return { homeScore: result.homeScore, awayScore: result.awayScore, winner, homeTeam: home, awayTeam: away, boxscore: result.boxscore };
+    return {
+      homeScore: result.homeScore, awayScore: result.awayScore,
+      innings: result.innings, awayLine: result.awayLine, homeLine: result.homeLine, mercyRule: result.mercyRule, lineScore: result.lineScore,
+      winner, homeTeam: home, awayTeam: away, boxscore: result.boxscore,
+    };
   });
   return { conference: conferenceStandingRows[0]?.conference, rounds, champion };
 }
@@ -146,6 +150,7 @@ export function runWorldSeries(entrants, league, seed = 1) {
     return {
       a, b, homeTeam: home, awayTeam: away,
       homeScore: result.homeScore, awayScore: result.awayScore,
+      innings: result.innings, awayLine: result.awayLine, homeLine: result.homeLine, mercyRule: result.mercyRule, lineScore: result.lineScore,
       winner, loser, boxscore: result.boxscore,
     };
   }

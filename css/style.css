@@ -580,6 +580,17 @@ main {
   box-shadow: var(--shadow-xs);
 }
 
+.bmatch-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s var(--ease), transform 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+.bmatch-clickable:hover {
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+  border-color: var(--field-green);
+}
+
 .bracket-col:not(:last-child) .bracket-col-matches .bmatch::after {
   content: '';
   position: absolute;

@@ -200,6 +200,7 @@ function loadState() {
 function newSeason() {
   try {
     state = freshState(Date.now() % 1000000);
+    postseasonFullCache = null;
     saveState();
     renderAll();
     setMessage('New season generated: 56 teams, 13-week schedule.');
@@ -284,28 +285,49 @@ function simWeekQuiet() {
   else state.currentWeek = week + 1;
 }
 
+function computePostseasonResult() {
+  const standings = computeStandings(TEAMS, state.games);
+  const byConf = standingsByConference(standings);
+  const rankings = computeRankings(TEAMS, state.games);
+
+  const conferenceTournaments = Object.entries(byConf).map(([conf, rows], i) =>
+    runConferenceTournament(rows, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + i * 17 + 3)
+  );
+
+  const field = selectField(conferenceTournaments, rankings, 16);
+  const regionals = runRegionals(field, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + 101);
+  const winners = regionals.map((m) => m.winner);
+  const worldSeries = runWorldSeries(winners, LEAGUE, state.seed + 202);
+
+  return { conferenceTournaments, field, regionals, worldSeries };
+}
+
+// The full postseason (with box scores, rosters, everything) is never
+// persisted -- it's fully deterministic from state.seed and state.games, and
+// re-simulating the WHOLE postseason takes well under a millisecond, so we
+// just regenerate it on demand whenever a box score needs to be shown and
+// cache it in memory for the rest of the session. Invalidated whenever the
+// postseason is (re-)simulated or a new season starts.
+let postseasonFullCache = null;
+function getPostseasonFull() {
+  if (!postseasonFullCache) postseasonFullCache = computePostseasonResult();
+  return postseasonFullCache;
+}
+
 function simPostseason() {
   if (!state.regularSeasonComplete) return;
   try {
-    const standings = computeStandings(TEAMS, state.games);
-    const byConf = standingsByConference(standings);
-    const rankings = computeRankings(TEAMS, state.games);
+    postseasonFullCache = computePostseasonResult();
+    const champion = postseasonFullCache.worldSeries.champion.name;
 
-    const conferenceTournaments = Object.entries(byConf).map(([conf, rows], i) =>
-      runConferenceTournament(rows, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + i * 17 + 3)
-    );
-
-    const field = selectField(conferenceTournaments, rankings, 16);
-    const regionals = runRegionals(field, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + 101);
-    const winners = regionals.map((m) => m.winner);
-    const worldSeries = runWorldSeries(winners, LEAGUE, state.seed + 202);
-
-    const postseason = { conferenceTournaments, field, regionals, worldSeries };
-    stripHeavyFieldsDeep(postseason);
+    const postseason = JSON.parse(JSON.stringify(postseasonFullCache, (key, value) => {
+      if (key === 'roster' || key === 'team' || key === 'boxscore') return undefined;
+      return value;
+    }));
     state.postseason = postseason;
     saveState();
     renderAll();
-    setMessage(`National Champion: ${worldSeries.champion.name}!`);
+    setMessage(`National Champion: ${champion}!`);
   } catch (err) {
     console.error('Postseason simulation failed:', err);
     setMessage(`Postseason simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
@@ -547,11 +569,25 @@ function matchCardHTML(m, prefix) {
   `;
 }
 
+// Builds one match card, wiring it up to reopen its box score (regenerated
+// on demand -- see getPostseasonFull) if it's a real, playable match.
+function buildMatchCard(m, path, prefix) {
+  const card = document.createElement('div');
+  card.className = 'bmatch';
+  card.innerHTML = matchCardHTML(m, prefix);
+  if (m.a && m.b) {
+    card.classList.add('bmatch-clickable');
+    card.dataset.psPath = JSON.stringify(path);
+  }
+  return card;
+}
+
 // Renders a full tree: one column per round, connector lines between
 // rounds, each round's matches vertically centered against their feeders
 // via flexbox. Works for any bracket whose round sizes halve each step
-// (which every bracket in this app does).
-function renderBracketTree(rounds, roundLabels) {
+// (which every bracket in this app does). `pathPrefix` locates this set of
+// rounds within state.postseason, e.g. ['conferenceTournaments', 3, 'rounds'].
+function renderBracketTree(rounds, roundLabels, pathPrefix) {
   const tree = document.createElement('div');
   tree.className = 'bracket-tree';
   rounds.forEach((round, i) => {
@@ -564,11 +600,8 @@ function renderBracketTree(rounds, roundLabels) {
 
     const matchesWrap = document.createElement('div');
     matchesWrap.className = 'bracket-col-matches';
-    round.forEach((m) => {
-      const card = document.createElement('div');
-      card.className = 'bmatch';
-      card.innerHTML = matchCardHTML(m);
-      matchesWrap.appendChild(card);
+    round.forEach((m, j) => {
+      matchesWrap.appendChild(buildMatchCard(m, [...pathPrefix, i, j]));
     });
     col.appendChild(matchesWrap);
     tree.appendChild(col);
@@ -599,12 +632,12 @@ function renderPostseason() {
   // Conference tournaments -- one visual bracket tree per conference
   const confSection = document.createElement('div');
   confSection.className = 'bracket-section';
-  confSection.innerHTML = '<h3>Conference Tournaments</h3>';
-  conferenceTournaments.forEach((ct) => {
+  confSection.innerHTML = '<h3>Conference Tournaments <span class="view-note">click any match for its box score</span></h3>';
+  conferenceTournaments.forEach((ct, ci) => {
     const confWrap = document.createElement('div');
     confWrap.className = 'conf-tourney-block';
     confWrap.innerHTML = `<div class="conf-champ-line"><strong>${ct.conference}</strong> champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
-    confWrap.appendChild(renderBracketTree(ct.rounds));
+    confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds']));
     confSection.appendChild(confWrap);
   });
   container.appendChild(confSection);
@@ -631,14 +664,11 @@ function renderPostseason() {
   // since there's nothing upstream to connect them to yet.
   const regSection = document.createElement('div');
   regSection.className = 'bracket-section';
-  regSection.innerHTML = '<h3>Regionals (Best-of-3)</h3>';
+  regSection.innerHTML = '<h3>Regionals (Best-of-3) <span class="view-note">click for the series\' box scores</span></h3>';
   const regGrid = document.createElement('div');
   regGrid.className = 'bracket-grid';
-  regionals.forEach((m) => {
-    const card = document.createElement('div');
-    card.className = 'bmatch';
-    card.innerHTML = matchCardHTML(m);
-    regGrid.appendChild(card);
+  regionals.forEach((m, i) => {
+    regGrid.appendChild(buildMatchCard(m, ['regionals', i]));
   });
   regSection.appendChild(regGrid);
   container.appendChild(regSection);
@@ -647,19 +677,19 @@ function renderPostseason() {
   // bracket tree, then the grand final (with an "if necessary" decider).
   const wsSection = document.createElement('div');
   wsSection.className = 'bracket-section';
-  wsSection.innerHTML = '<h3>World Series <span class="view-note">(double elimination)</span></h3>';
+  wsSection.innerHTML = '<h3>World Series <span class="view-note">(double elimination) — click any match for its box score</span></h3>';
 
   const wbLabel = document.createElement('div');
   wbLabel.className = 'ws-bracket-label';
   wbLabel.textContent = "Winners' Bracket";
   wsSection.appendChild(wbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"]));
+  wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket']));
 
   const lbLabel = document.createElement('div');
   lbLabel.className = 'ws-bracket-label';
   lbLabel.textContent = "Losers' Bracket";
   wsSection.appendChild(lbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"]));
+  wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket']));
 
   const gfLabel = document.createElement('div');
   gfLabel.className = 'ws-bracket-label';
@@ -667,15 +697,9 @@ function renderPostseason() {
   wsSection.appendChild(gfLabel);
   const gfGrid = document.createElement('div');
   gfGrid.className = 'bracket-grid';
-  const gf1Card = document.createElement('div');
-  gf1Card.className = 'bmatch';
-  gf1Card.innerHTML = matchCardHTML(worldSeries.grandFinal.game1, 'Game 1');
-  gfGrid.appendChild(gf1Card);
+  gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1'));
   if (worldSeries.grandFinal.game2) {
-    const gf2Card = document.createElement('div');
-    gf2Card.className = 'bmatch';
-    gf2Card.innerHTML = matchCardHTML(worldSeries.grandFinal.game2, 'Game 2 (if necessary)');
-    gfGrid.appendChild(gf2Card);
+    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)'));
   }
   wsSection.appendChild(gfGrid);
   container.appendChild(wsSection);
@@ -858,14 +882,11 @@ function openTeamModal(name) {
   document.getElementById('teamModalOverlay').classList.add('open');
 }
 
-function openBoxScoreModal(gameId) {
-  const game = state.games.find((g) => g.id === Number(gameId));
-  if (!game || !game.played) return;
-  const result = regenerateGameResult(game);
-  const { boxscore } = result;
-
+// Shared by the regular-season and postseason box score modals: linescore
+// (with R/H/E) plus batting/pitching tables for both sides of one game.
+function boxScoreSectionHTML(result, awayName, homeName) {
   function battingTable(side, teamName) {
-    const rows = boxscore[side].batting.map((b) => `
+    const rows = result.boxscore[side].batting.map((b) => `
       <tr>
         <td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
         <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td>
@@ -881,7 +902,7 @@ function openBoxScoreModal(gameId) {
   }
 
   function pitchingTable(side) {
-    const rows = boxscore[side].pitching.map((p) => `
+    const rows = result.boxscore[side].pitching.map((p) => `
       <tr>
         <td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.ip}</td><td>${p.h}</td><td>${p.r}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td>
         <td>${p.decision}</td>
@@ -899,6 +920,34 @@ function openBoxScoreModal(gameId) {
   const homeLineRow = result.homeLine.map((r) => `<td>${r === null ? '' : r}</td>`).join('')
     + `<td class="bs-rhe"><strong>${result.lineScore.home.r}</strong></td><td class="bs-rhe">${result.lineScore.home.h}</td><td class="bs-rhe">${result.lineScore.home.e}</td>`;
 
+  return `
+    <table class="standings-table tp-mini-table bs-linescore">
+      <thead><tr><th></th>${lineHeader}</tr></thead>
+      <tbody>
+        <tr><td>${teamLink(awayName)}</td>${awayLineRow}</tr>
+        <tr><td>${teamLink(homeName)}</td>${homeLineRow}</tr>
+      </tbody>
+    </table>
+
+    <div class="tp-schedule-title">Batting</div>
+    <div class="tp-roster-tables">
+      ${battingTable('away', awayName)}
+      ${battingTable('home', homeName)}
+    </div>
+
+    <div class="tp-schedule-title">Pitching</div>
+    <div class="tp-roster-tables">
+      ${pitchingTable('away')}
+      ${pitchingTable('home')}
+    </div>
+  `;
+}
+
+function openBoxScoreModal(gameId) {
+  const game = state.games.find((g) => g.id === Number(gameId));
+  if (!game || !game.played) return;
+  const result = regenerateGameResult(game);
+
   document.getElementById('modalContent').innerHTML = `
     <div class="tp-header">
       <div class="bs-header-badges">${teamBadge(game.away, 40)}${teamBadge(game.home, 40)}</div>
@@ -907,25 +956,58 @@ function openBoxScoreModal(gameId) {
         <p class="tp-sub">Week ${game.week} · Game ${game.gameOfSeries} of ${game.seriesLength ?? 3} · ${game.conferenceGame ? 'Conference' : 'Non-conference'}${result.mercyRule ? ` · <strong>Final (mercy rule, ${result.innings} inn.)</strong>` : ''}</p>
       </div>
     </div>
-    <table class="standings-table tp-mini-table bs-linescore">
-      <thead><tr><th></th>${lineHeader}</tr></thead>
-      <tbody>
-        <tr><td>${teamLink(game.away)}</td>${awayLineRow}</tr>
-        <tr><td>${teamLink(game.home)}</td>${homeLineRow}</tr>
-      </tbody>
-    </table>
+    ${boxScoreSectionHTML(result, game.away, game.home)}
+  `;
 
-    <div class="tp-schedule-title">Batting</div>
-    <div class="tp-roster-tables">
-      ${battingTable('away', game.away)}
-      ${battingTable('home', game.home)}
-    </div>
+  document.getElementById('teamModalOverlay').classList.add('open');
+}
 
-    <div class="tp-schedule-title">Pitching</div>
-    <div class="tp-roster-tables">
-      ${pitchingTable('away')}
-      ${pitchingTable('home')}
+function findPostseasonNode(root, path) {
+  let node = root;
+  for (const key of path) {
+    if (node == null) return null;
+    node = node[key];
+  }
+  return node;
+}
+
+// Postseason box scores are never stored -- see getPostseasonFull(). This
+// regenerates the exact same postseason run (deterministic from the same
+// seed) and pulls out the one match the user clicked on.
+function openPostseasonBoxScoreModal(pathJson) {
+  let path;
+  try { path = JSON.parse(pathJson); } catch { return; }
+  const fresh = getPostseasonFull();
+  const match = findPostseasonNode(fresh, path);
+  if (!match || !match.a || !match.b) return;
+
+  let subtitle;
+  let bodyHTML;
+  if (match.games && match.games.length) {
+    // Best-of-3 series (regionals): show every game played.
+    subtitle = `Regional series · ${match.winner.name} wins ${match.winsA}-${match.winsB}`;
+    bodyHTML = match.games.map((g, i) => {
+      const awayNm = g.aIsHome ? match.b.name : match.a.name;
+      const homeNm = g.aIsHome ? match.a.name : match.b.name;
+      return `
+        <div class="tp-schedule-title">Game ${i + 1}${g.mercyRule ? ' (mercy rule)' : ''}</div>
+        ${boxScoreSectionHTML(g, awayNm, homeNm)}
+      `;
+    }).join('');
+  } else {
+    subtitle = match.mercyRule ? `Final (mercy rule, ${match.innings} inn.)` : 'Final';
+    bodyHTML = boxScoreSectionHTML(match, match.awayTeam.name, match.homeTeam.name);
+  }
+
+  document.getElementById('modalContent').innerHTML = `
+    <div class="tp-header">
+      <div class="bs-header-badges">${teamBadge(match.a.name, 40)}${teamBadge(match.b.name, 40)}</div>
+      <div>
+        <h2>${match.a.name} vs ${match.b.name}</h2>
+        <p class="tp-sub">${subtitle}</p>
+      </div>
     </div>
+    ${bodyHTML}
   `;
 
   document.getElementById('teamModalOverlay').classList.add('open');
@@ -941,6 +1023,8 @@ function wireTeamModal() {
     if (link) { openTeamModal(link.dataset.team); return; }
     const boxLink = e.target.closest('[data-boxscore-game]');
     if (boxLink) { openBoxScoreModal(boxLink.dataset.boxscoreGame); return; }
+    const psLink = e.target.closest('[data-ps-path]');
+    if (psLink) { openPostseasonBoxScoreModal(psLink.dataset.psPath); return; }
     if (e.target.id === 'teamModalOverlay') closeTeamModal();
   });
   document.getElementById('modalClose').addEventListener('click', closeTeamModal);
