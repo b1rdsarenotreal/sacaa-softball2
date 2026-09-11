@@ -1,0 +1,1570 @@
+[
+  {
+    "name": "Arizona",
+    "conference": "Pac-10",
+    "coach": "Caitlin Lowe",
+    "batting": {
+      "avg": 0.348,
+      "obp": 0.437,
+      "slg": 0.571,
+      "ops": 1.008,
+      "woba": 0.398,
+      "iso": 0.223,
+      "rpg": 7.1
+    },
+    "pitching": {
+      "era": 2.6,
+      "whip": 1.15,
+      "k_per7": 4.8,
+      "k_bb": 2.45
+    },
+    "fielding": {
+      "pct": 0.975
+    },
+    "colors": {
+      "primary": "#195494",
+      "secondary": "#9bbbdd"
+    },
+    "abbr": "ARIZ"
+  },
+  {
+    "name": "Arizona State",
+    "conference": "Pac-10",
+    "coach": "Megan Bartlett",
+    "batting": {
+      "avg": 0.302,
+      "obp": 0.371,
+      "slg": 0.462,
+      "ops": 0.833,
+      "woba": 0.352,
+      "iso": 0.161,
+      "rpg": 4.7
+    },
+    "pitching": {
+      "era": 3.36,
+      "whip": 1.37,
+      "k_per7": 7.8,
+      "k_bb": 3.13
+    },
+    "fielding": {
+      "pct": 0.97
+    },
+    "colors": {
+      "primary": "#2274b3",
+      "secondary": "#bbd4e6"
+    },
+    "abbr": "AS"
+  },
+  {
+    "name": "Azusa Pacific",
+    "conference": "PWC",
+    "coach": "Sarah Parten",
+    "batting": {
+      "avg": 0.305,
+      "obp": 0.357,
+      "slg": 0.428,
+      "ops": 0.785,
+      "woba": 0.34,
+      "iso": 0.122,
+      "rpg": 4.4
+    },
+    "pitching": {
+      "era": 3.16,
+      "whip": 1.44,
+      "k_per7": 3.7,
+      "k_bb": 1.39
+    },
+    "fielding": {
+      "pct": 0.972
+    },
+    "colors": {
+      "primary": "#4e1aa2",
+      "secondary": "#bda6e1"
+    },
+    "abbr": "AP"
+  },
+  {
+    "name": "Bakersfield",
+    "conference": "BWC",
+    "coach": "Letty Olivarez ",
+    "batting": {
+      "avg": 0.264,
+      "obp": 0.339,
+      "slg": 0.367,
+      "ops": 0.706,
+      "woba": 0.326,
+      "iso": 0.103,
+      "rpg": 3.6
+    },
+    "pitching": {
+      "era": 5.64,
+      "whip": 1.98,
+      "k_per7": 1.5,
+      "k_bb": 0.35
+    },
+    "fielding": {
+      "pct": 0.955
+    },
+    "colors": {
+      "primary": "#a32823",
+      "secondary": "#e1b3b1"
+    },
+    "abbr": "BAKE"
+  },
+  {
+    "name": "Biola",
+    "conference": "PWC",
+    "coach": "Kristin Halte",
+    "batting": {
+      "avg": 0.311,
+      "obp": 0.36,
+      "slg": 0.419,
+      "ops": 0.779,
+      "woba": 0.326,
+      "iso": 0.108,
+      "rpg": 4.7
+    },
+    "pitching": {
+      "era": 2.58,
+      "whip": 1.26,
+      "k_per7": 4,
+      "k_bb": 2.29
+    },
+    "fielding": {
+      "pct": 0.978
+    },
+    "colors": {
+      "primary": "#5e2b91",
+      "secondary": "#c4aeda"
+    },
+    "abbr": "BIOL"
+  },
+  {
+    "name": "Cal Baptist",
+    "conference": "BWC",
+    "coach": "Brandon Telesco",
+    "batting": {
+      "avg": 0.283,
+      "obp": 0.348,
+      "slg": 0.388,
+      "ops": 0.736,
+      "woba": 0.326,
+      "iso": 0.105,
+      "rpg": 4.1
+    },
+    "pitching": {
+      "era": 4.03,
+      "whip": 1.66,
+      "k_per7": 3.4,
+      "k_bb": 1.02
+    },
+    "fielding": {
+      "pct": 0.981
+    },
+    "colors": {
+      "primary": "#8a2d22",
+      "secondary": "#d8a6a0"
+    },
+    "abbr": "CB"
+  },
+  {
+    "name": "Cal Poly",
+    "conference": "BWC",
+    "coach": "Jenny Condon ",
+    "batting": {
+      "avg": 0.231,
+      "obp": 0.302,
+      "slg": 0.292,
+      "ops": 0.594,
+      "woba": 0.283,
+      "iso": 0.061,
+      "rpg": 2.1
+    },
+    "pitching": {
+      "era": 4.81,
+      "whip": 1.9,
+      "k_per7": 3.1,
+      "k_bb": 0.75
+    },
+    "fielding": {
+      "pct": 0.947
+    },
+    "colors": {
+      "primary": "#b91c1f",
+      "secondary": "#e8b9ba"
+    },
+    "abbr": "CP"
+  },
+  {
+    "name": "Cal Poly Humboldt",
+    "conference": "CCAA",
+    "coach": "Megan Corriea",
+    "batting": {
+      "avg": 0.308,
+      "obp": 0.388,
+      "slg": 0.431,
+      "ops": 0.819,
+      "woba": 0.356,
+      "iso": 0.123,
+      "rpg": 5.1
+    },
+    "pitching": {
+      "era": 3.56,
+      "whip": 1.61,
+      "k_per7": 3.9,
+      "k_bb": 1.15
+    },
+    "fielding": {
+      "pct": 0.957
+    },
+    "colors": {
+      "primary": "#ac6c33",
+      "secondary": "#e5d5c6"
+    },
+    "abbr": "CPH"
+  },
+  {
+    "name": "Cal State Dominguez Hills",
+    "conference": "CCAA",
+    "coach": "Katie Garcia",
+    "batting": {
+      "avg": 0.281,
+      "obp": 0.352,
+      "slg": 0.403,
+      "ops": 0.755,
+      "woba": 0.305,
+      "iso": 0.123,
+      "rpg": 4.3
+    },
+    "pitching": {
+      "era": 3.44,
+      "whip": 1.42,
+      "k_per7": 2.6,
+      "k_bb": 1.45
+    },
+    "fielding": {
+      "pct": 0.973
+    },
+    "colors": {
+      "primary": "#936c2e",
+      "secondary": "#dbcbb2"
+    },
+    "abbr": "CSDH"
+  },
+  {
+    "name": "Cal State East Bay",
+    "conference": "CCAA",
+    "coach": "Claire Sua-Amundson",
+    "batting": {
+      "avg": 0.285,
+      "obp": 0.346,
+      "slg": 0.392,
+      "ops": 0.738,
+      "woba": 0.31,
+      "iso": 0.107,
+      "rpg": 4.1
+    },
+    "pitching": {
+      "era": 1.88,
+      "whip": 1.04,
+      "k_per7": 4.5,
+      "k_bb": 2.43
+    },
+    "fielding": {
+      "pct": 0.967
+    },
+    "colors": {
+      "primary": "#ab9134",
+      "secondary": "#e5dec7"
+    },
+    "abbr": "CSEB"
+  },
+  {
+    "name": "Cal State Fullerton",
+    "conference": "BWC",
+    "coach": "Gina Oaks Garcia",
+    "batting": {
+      "avg": 0.341,
+      "obp": 0.388,
+      "slg": 0.453,
+      "ops": 0.841,
+      "woba": 0.374,
+      "iso": 0.112,
+      "rpg": 5.4
+    },
+    "pitching": {
+      "era": 3.58,
+      "whip": 1.52,
+      "k_per7": 5.8,
+      "k_bb": 1.49
+    },
+    "fielding": {
+      "pct": 0.96
+    },
+    "colors": {
+      "primary": "#a33254",
+      "secondary": "#e2c0ca"
+    },
+    "abbr": "CSF"
+  },
+  {
+    "name": "Cal State Monterey Bay",
+    "conference": "CCAA",
+    "coach": "Emily Monta\u00f1ez",
+    "batting": {
+      "avg": 0.271,
+      "obp": 0.344,
+      "slg": 0.398,
+      "ops": 0.742,
+      "woba": 0.318,
+      "iso": 0.127,
+      "rpg": 4.6
+    },
+    "pitching": {
+      "era": 3.86,
+      "whip": 1.54,
+      "k_per7": 2.5,
+      "k_bb": 1.09
+    },
+    "fielding": {
+      "pct": 0.964
+    },
+    "colors": {
+      "primary": "#a3821e",
+      "secondary": "#e1d4ab"
+    },
+    "abbr": "CSMB"
+  },
+  {
+    "name": "Cal State Northridge",
+    "conference": "BWC",
+    "coach": "Jodi Cox",
+    "batting": {
+      "avg": 0.274,
+      "obp": 0.357,
+      "slg": 0.39,
+      "ops": 0.747,
+      "woba": 0.308,
+      "iso": 0.116,
+      "rpg": 4.3
+    },
+    "pitching": {
+      "era": 3.61,
+      "whip": 1.36,
+      "k_per7": 3.6,
+      "k_bb": 2.12
+    },
+    "fielding": {
+      "pct": 0.959
+    },
+    "colors": {
+      "primary": "#b12f31",
+      "secondary": "#e6c5c6"
+    },
+    "abbr": "CSN"
+  },
+  {
+    "name": "Cal State San Bernardino",
+    "conference": "CCAA",
+    "coach": "Dee Payan",
+    "batting": {
+      "avg": 0.295,
+      "obp": 0.352,
+      "slg": 0.409,
+      "ops": 0.761,
+      "woba": 0.321,
+      "iso": 0.114,
+      "rpg": 4.3
+    },
+    "pitching": {
+      "era": 3.11,
+      "whip": 1.47,
+      "k_per7": 4.3,
+      "k_bb": 1.6
+    },
+    "fielding": {
+      "pct": 0.958
+    },
+    "colors": {
+      "primary": "#9c871a",
+      "secondary": "#e0d6a3"
+    },
+    "abbr": "CSSB"
+  },
+  {
+    "name": "Cal State San Marcos",
+    "conference": "CCAA",
+    "coach": "AJ Robinson",
+    "batting": {
+      "avg": 0.314,
+      "obp": 0.389,
+      "slg": 0.412,
+      "ops": 0.801,
+      "woba": 0.344,
+      "iso": 0.099,
+      "rpg": 4.9
+    },
+    "pitching": {
+      "era": 3.01,
+      "whip": 1.45,
+      "k_per7": 3.7,
+      "k_bb": 1.23
+    },
+    "fielding": {
+      "pct": 0.965
+    },
+    "colors": {
+      "primary": "#9c902a",
+      "secondary": "#dedab4"
+    },
+    "abbr": "CSSM"
+  },
+  {
+    "name": "California",
+    "conference": "Pac-10",
+    "coach": "Steve Singleton",
+    "batting": {
+      "avg": 0.313,
+      "obp": 0.405,
+      "slg": 0.513,
+      "ops": 0.918,
+      "woba": 0.381,
+      "iso": 0.2,
+      "rpg": 5.9
+    },
+    "pitching": {
+      "era": 4.32,
+      "whip": 1.6,
+      "k_per7": 4.4,
+      "k_bb": 1.44
+    },
+    "fielding": {
+      "pct": 0.963
+    },
+    "colors": {
+      "primary": "#216d95",
+      "secondary": "#a6c9dc"
+    },
+    "abbr": "CALI"
+  },
+  {
+    "name": "Central Washington",
+    "conference": "GNAC",
+    "coach": "Ronnie Ladines",
+    "batting": {
+      "avg": 0.268,
+      "obp": 0.335,
+      "slg": 0.39,
+      "ops": 0.725,
+      "woba": 0.315,
+      "iso": 0.122,
+      "rpg": 3.9
+    },
+    "pitching": {
+      "era": 7.2,
+      "whip": 2.09,
+      "k_per7": 4.1,
+      "k_bb": 1.26
+    },
+    "fielding": {
+      "pct": 0.94
+    },
+    "colors": {
+      "primary": "#78a91d",
+      "secondary": "#d1e3af"
+    },
+    "abbr": "CW"
+  },
+  {
+    "name": "Chaminade",
+    "conference": "GNAC",
+    "coach": "Dereck Heresa",
+    "batting": {
+      "avg": 0.265,
+      "obp": 0.36,
+      "slg": 0.359,
+      "ops": 0.719,
+      "woba": 0.312,
+      "iso": 0.094,
+      "rpg": 3.2
+    },
+    "pitching": {
+      "era": 5.37,
+      "whip": 1.93,
+      "k_per7": 1.8,
+      "k_bb": 0.57
+    },
+    "fielding": {
+      "pct": 0.954
+    },
+    "colors": {
+      "primary": "#468b27",
+      "secondary": "#b6d8a6"
+    },
+    "abbr": "CHAM"
+  },
+  {
+    "name": "Chico State",
+    "conference": "CCAA",
+    "coach": "Angel Shamblin",
+    "batting": {
+      "avg": 0.257,
+      "obp": 0.342,
+      "slg": 0.343,
+      "ops": 0.685,
+      "woba": 0.289,
+      "iso": 0.086,
+      "rpg": 3.5
+    },
+    "pitching": {
+      "era": 2.41,
+      "whip": 1.2,
+      "k_per7": 4.1,
+      "k_bb": 2.3
+    },
+    "fielding": {
+      "pct": 0.95
+    },
+    "colors": {
+      "primary": "#8c7926",
+      "secondary": "#d8cfa5"
+    },
+    "abbr": "CS"
+  },
+  {
+    "name": "Concordia",
+    "conference": "PWC",
+    "coach": "Crystal Rosenthal",
+    "batting": {
+      "avg": 0.296,
+      "obp": 0.374,
+      "slg": 0.429,
+      "ops": 0.803,
+      "woba": 0.335,
+      "iso": 0.133,
+      "rpg": 5
+    },
+    "pitching": {
+      "era": 2.01,
+      "whip": 1.19,
+      "k_per7": 4.2,
+      "k_bb": 2.08
+    },
+    "fielding": {
+      "pct": 0.953
+    },
+    "colors": {
+      "primary": "#7924a7",
+      "secondary": "#d2b5e2"
+    },
+    "abbr": "CONC"
+  },
+  {
+    "name": "Dominican",
+    "conference": "PWC",
+    "coach": "Juliana Santos",
+    "batting": {
+      "avg": 0.27,
+      "obp": 0.341,
+      "slg": 0.364,
+      "ops": 0.705,
+      "woba": 0.295,
+      "iso": 0.094,
+      "rpg": 4
+    },
+    "pitching": {
+      "era": 2.58,
+      "whip": 1.29,
+      "k_per7": 3.7,
+      "k_bb": 2.09
+    },
+    "fielding": {
+      "pct": 0.963
+    },
+    "colors": {
+      "primary": "#73329e",
+      "secondary": "#d2bce0"
+    },
+    "abbr": "DOMI"
+  },
+  {
+    "name": "Fresno State",
+    "conference": "MWC",
+    "coach": "Charlotte Morgan",
+    "batting": {
+      "avg": 0.279,
+      "obp": 0.346,
+      "slg": 0.384,
+      "ops": 0.73,
+      "woba": 0.308,
+      "iso": 0.106,
+      "rpg": 4.4
+    },
+    "pitching": {
+      "era": 2.78,
+      "whip": 1.3,
+      "k_per7": 3.9,
+      "k_bb": 1.9
+    },
+    "fielding": {
+      "pct": 0.965
+    },
+    "colors": {
+      "primary": "#218b5a",
+      "secondary": "#a0d9be"
+    },
+    "abbr": "FS"
+  },
+  {
+    "name": "Grand Canyon",
+    "conference": "MWC",
+    "coach": "Shannon Hays",
+    "batting": {
+      "avg": 0.347,
+      "obp": 0.434,
+      "slg": 0.525,
+      "ops": 0.959,
+      "woba": 0.381,
+      "iso": 0.178,
+      "rpg": 6.5
+    },
+    "pitching": {
+      "era": 1.94,
+      "whip": 1.12,
+      "k_per7": 4.9,
+      "k_bb": 2.68
+    },
+    "fielding": {
+      "pct": 0.974
+    },
+    "colors": {
+      "primary": "#26875e",
+      "secondary": "#a2d6c1"
+    },
+    "abbr": "GC"
+  },
+  {
+    "name": "Hawai'i Pacific",
+    "conference": "GNAC",
+    "coach": "Maya Nakamura",
+    "batting": {
+      "avg": 0.272,
+      "obp": 0.335,
+      "slg": 0.364,
+      "ops": 0.699,
+      "woba": 0.292,
+      "iso": 0.092,
+      "rpg": 3.3
+    },
+    "pitching": {
+      "era": 4.8,
+      "whip": 1.74,
+      "k_per7": 3.2,
+      "k_bb": 1.4
+    },
+    "fielding": {
+      "pct": 0.96
+    },
+    "colors": {
+      "primary": "#7cae2c",
+      "secondary": "#d7e5c1"
+    },
+    "abbr": "HP"
+  },
+  {
+    "name": "Hawai'i-Hilo",
+    "conference": "GNAC",
+    "coach": "Aisha Sueda",
+    "batting": {
+      "avg": 0.304,
+      "obp": 0.376,
+      "slg": 0.401,
+      "ops": 0.777,
+      "woba": 0.331,
+      "iso": 0.096,
+      "rpg": 5
+    },
+    "pitching": {
+      "era": 3.24,
+      "whip": 1.44,
+      "k_per7": 2.9,
+      "k_bb": 1.08
+    },
+    "fielding": {
+      "pct": 0.962
+    },
+    "colors": {
+      "primary": "#66922a",
+      "secondary": "#c8daad"
+    },
+    "abbr": "HH"
+  },
+  {
+    "name": "Hawaii",
+    "conference": "MWC",
+    "coach": "Panita Thanatharn",
+    "batting": {
+      "avg": 0.277,
+      "obp": 0.354,
+      "slg": 0.414,
+      "ops": 0.768,
+      "woba": 0.318,
+      "iso": 0.137,
+      "rpg": 4.7
+    },
+    "pitching": {
+      "era": 3.66,
+      "whip": 1.39,
+      "k_per7": 3,
+      "k_bb": 1.5
+    },
+    "fielding": {
+      "pct": 0.975
+    },
+    "colors": {
+      "primary": "#198f65",
+      "secondary": "#98dbc4"
+    },
+    "abbr": "HAWA"
+  },
+  {
+    "name": "Jessup",
+    "conference": "PWC",
+    "coach": "Brie Campbell",
+    "batting": {
+      "avg": 0.29,
+      "obp": 0.367,
+      "slg": 0.424,
+      "ops": 0.79,
+      "woba": 0.336,
+      "iso": 0.134,
+      "rpg": 4.738
+    },
+    "pitching": {
+      "era": 3.725,
+      "whip": 1.516,
+      "k_per7": 4.275,
+      "k_bb": 1.68
+    },
+    "fielding": {
+      "pct": 0.962
+    },
+    "colors": {
+      "primary": "#6b2ba0",
+      "secondary": "#ceb7e0"
+    },
+    "abbr": "JESS"
+  },
+  {
+    "name": "Long Beach State",
+    "conference": "BWC",
+    "coach": "Kendall Fearn",
+    "batting": {
+      "avg": 0.282,
+      "obp": 0.374,
+      "slg": 0.405,
+      "ops": 0.779,
+      "woba": 0.338,
+      "iso": 0.124,
+      "rpg": 4.8
+    },
+    "pitching": {
+      "era": 3.47,
+      "whip": 1.46,
+      "k_per7": 4.5,
+      "k_bb": 1.46
+    },
+    "fielding": {
+      "pct": 0.967
+    },
+    "colors": {
+      "primary": "#bd2246",
+      "secondary": "#e9c2cb"
+    },
+    "abbr": "LBS"
+  },
+  {
+    "name": "Loyola Marymount",
+    "conference": "WCC",
+    "coach": "Tairia Flowers",
+    "batting": {
+      "avg": 0.278,
+      "obp": 0.36,
+      "slg": 0.426,
+      "ops": 0.786,
+      "woba": 0.342,
+      "iso": 0.148,
+      "rpg": 4.4
+    },
+    "pitching": {
+      "era": 4.97,
+      "whip": 1.82,
+      "k_per7": 3.9,
+      "k_bb": 1.07
+    },
+    "fielding": {
+      "pct": 0.967
+    },
+    "colors": {
+      "primary": "#b32c7d",
+      "secondary": "#e7c5d9"
+    },
+    "abbr": "LM"
+  },
+  {
+    "name": "Menlo",
+    "conference": "PWC",
+    "coach": "McKinsey Thorpe",
+    "batting": {
+      "avg": 0.29,
+      "obp": 0.367,
+      "slg": 0.424,
+      "ops": 0.79,
+      "woba": 0.336,
+      "iso": 0.134,
+      "rpg": 4.738
+    },
+    "pitching": {
+      "era": 3.725,
+      "whip": 1.516,
+      "k_per7": 4.275,
+      "k_bb": 1.68
+    },
+    "fielding": {
+      "pct": 0.962
+    },
+    "colors": {
+      "primary": "#671d8f",
+      "secondary": "#c59edb"
+    },
+    "abbr": "MENL"
+  },
+  {
+    "name": "Nevada",
+    "conference": "MWC",
+    "coach": "Victoria Hayward",
+    "batting": {
+      "avg": 0.321,
+      "obp": 0.4,
+      "slg": 0.53,
+      "ops": 0.93,
+      "woba": 0.389,
+      "iso": 0.209,
+      "rpg": 5.9
+    },
+    "pitching": {
+      "era": 2.94,
+      "whip": 1.4,
+      "k_per7": 5.7,
+      "k_bb": 1.65
+    },
+    "fielding": {
+      "pct": 0.968
+    },
+    "colors": {
+      "primary": "#1b8c5b",
+      "secondary": "#99dabe"
+    },
+    "abbr": "NEVA"
+  },
+  {
+    "name": "Oregon",
+    "conference": "Pac-10",
+    "coach": "Missy Lombardi",
+    "batting": {
+      "avg": 0.345,
+      "obp": 0.438,
+      "slg": 0.574,
+      "ops": 1.012,
+      "woba": 0.409,
+      "iso": 0.229,
+      "rpg": 7.7
+    },
+    "pitching": {
+      "era": 2.47,
+      "whip": 1.15,
+      "k_per7": 7.7,
+      "k_bb": 2.91
+    },
+    "fielding": {
+      "pct": 0.98
+    },
+    "colors": {
+      "primary": "#2a508d",
+      "secondary": "#aabcd8"
+    },
+    "abbr": "OREG"
+  },
+  {
+    "name": "Oregon State",
+    "conference": "Pac-10",
+    "coach": "Laura Berg",
+    "batting": {
+      "avg": 0.271,
+      "obp": 0.357,
+      "slg": 0.42,
+      "ops": 0.777,
+      "woba": 0.322,
+      "iso": 0.149,
+      "rpg": 4.3
+    },
+    "pitching": {
+      "era": 3.17,
+      "whip": 1.35,
+      "k_per7": 5.9,
+      "k_bb": 2.78
+    },
+    "fielding": {
+      "pct": 0.943
+    },
+    "colors": {
+      "primary": "#2342b2",
+      "secondary": "#bbc4e6"
+    },
+    "abbr": "OS"
+  },
+  {
+    "name": "Pacific",
+    "conference": "WCC",
+    "coach": "Sam Duran-Kukuk",
+    "batting": {
+      "avg": 0.28,
+      "obp": 0.355,
+      "slg": 0.397,
+      "ops": 0.752,
+      "woba": 0.329,
+      "iso": 0.118,
+      "rpg": 4.3
+    },
+    "pitching": {
+      "era": 5.57,
+      "whip": 1.86,
+      "k_per7": 3.2,
+      "k_bb": 1.01
+    },
+    "fielding": {
+      "pct": 0.958
+    },
+    "colors": {
+      "primary": "#9d1f73",
+      "secondary": "#dfa8cd"
+    },
+    "abbr": "PACI"
+  },
+  {
+    "name": "Portland State",
+    "conference": "MWC",
+    "coach": "Meadow McWhorter",
+    "batting": {
+      "avg": 0.237,
+      "obp": 0.321,
+      "slg": 0.326,
+      "ops": 0.647,
+      "woba": 0.297,
+      "iso": 0.09,
+      "rpg": 3.5
+    },
+    "pitching": {
+      "era": 6.07,
+      "whip": 1.93,
+      "k_per7": 3.7,
+      "k_bb": 0.94
+    },
+    "fielding": {
+      "pct": 0.931
+    },
+    "colors": {
+      "primary": "#279f9b",
+      "secondary": "#b2dfde"
+    },
+    "abbr": "PS"
+  },
+  {
+    "name": "Sacramento State",
+    "conference": "MWC",
+    "coach": "Lori Perez",
+    "batting": {
+      "avg": 0.314,
+      "obp": 0.387,
+      "slg": 0.547,
+      "ops": 0.934,
+      "woba": 0.388,
+      "iso": 0.233,
+      "rpg": 5.9
+    },
+    "pitching": {
+      "era": 4.06,
+      "whip": 1.59,
+      "k_per7": 5.6,
+      "k_bb": 1.86
+    },
+    "fielding": {
+      "pct": 0.95
+    },
+    "colors": {
+      "primary": "#298e67",
+      "secondary": "#aad9c7"
+    },
+    "abbr": "SACST"
+  },
+  {
+    "name": "Saint Martin's",
+    "conference": "GNAC",
+    "coach": "Jake White",
+    "batting": {
+      "avg": 0.33,
+      "obp": 0.43,
+      "slg": 0.442,
+      "ops": 0.872,
+      "woba": 0.353,
+      "iso": 0.112,
+      "rpg": 6.7
+    },
+    "pitching": {
+      "era": 4.88,
+      "whip": 1.82,
+      "k_per7": 3,
+      "k_bb": 1.4
+    },
+    "fielding": {
+      "pct": 0.955
+    },
+    "colors": {
+      "primary": "#389829",
+      "secondary": "#b6ddb0"
+    },
+    "abbr": "STMTN"
+  },
+  {
+    "name": "Saint Mary's",
+    "conference": "WCC",
+    "coach": "Sonja Garnett",
+    "batting": {
+      "avg": 0.278,
+      "obp": 0.353,
+      "slg": 0.437,
+      "ops": 0.79,
+      "woba": 0.341,
+      "iso": 0.159,
+      "rpg": 5
+    },
+    "pitching": {
+      "era": 3.76,
+      "whip": 1.48,
+      "k_per7": 4.7,
+      "k_bb": 1.51
+    },
+    "fielding": {
+      "pct": 0.969
+    },
+    "colors": {
+      "primary": "#972a88",
+      "secondary": "#dcb0d7"
+    },
+    "abbr": "STMRY"
+  },
+  {
+    "name": "San Diego",
+    "conference": "WCC",
+    "coach": "MJ Knighten",
+    "batting": {
+      "avg": 0.28,
+      "obp": 0.345,
+      "slg": 0.38,
+      "ops": 0.725,
+      "woba": 0.33,
+      "iso": 0.1,
+      "rpg": 3.8
+    },
+    "pitching": {
+      "era": 4.27,
+      "whip": 1.67,
+      "k_per7": 4.6,
+      "k_bb": 1.26
+    },
+    "fielding": {
+      "pct": 0.963
+    },
+    "colors": {
+      "primary": "#8d1a4e",
+      "secondary": "#da99b6"
+    },
+    "abbr": "SD"
+  },
+  {
+    "name": "San Diego State",
+    "conference": "MWC",
+    "coach": "Stacey Nuveman Deniz",
+    "batting": {
+      "avg": 0.297,
+      "obp": 0.369,
+      "slg": 0.428,
+      "ops": 0.797,
+      "woba": 0.334,
+      "iso": 0.131,
+      "rpg": 4.8
+    },
+    "pitching": {
+      "era": 2.91,
+      "whip": 1.26,
+      "k_per7": 3.9,
+      "k_bb": 2.01
+    },
+    "fielding": {
+      "pct": 0.969
+    },
+    "colors": {
+      "primary": "#258d61",
+      "secondary": "#a5d9c3"
+    },
+    "abbr": "SDS"
+  },
+  {
+    "name": "San Francisco State",
+    "conference": "CCAA",
+    "coach": "Alicia Reid",
+    "batting": {
+      "avg": 0.3,
+      "obp": 0.385,
+      "slg": 0.402,
+      "ops": 0.787,
+      "woba": 0.338,
+      "iso": 0.102,
+      "rpg": 5
+    },
+    "pitching": {
+      "era": 3.28,
+      "whip": 1.62,
+      "k_per7": 3.3,
+      "k_bb": 0.94
+    },
+    "fielding": {
+      "pct": 0.966
+    },
+    "colors": {
+      "primary": "#a5a021",
+      "secondary": "#e2e0b0"
+    },
+    "abbr": "SFS"
+  },
+  {
+    "name": "San Jose State",
+    "conference": "MWC",
+    "coach": "Carli Cutler",
+    "batting": {
+      "avg": 0.26,
+      "obp": 0.337,
+      "slg": 0.387,
+      "ops": 0.724,
+      "woba": 0.305,
+      "iso": 0.127,
+      "rpg": 3.8
+    },
+    "pitching": {
+      "era": 3.35,
+      "whip": 1.43,
+      "k_per7": 4.5,
+      "k_bb": 1.62
+    },
+    "fielding": {
+      "pct": 0.97
+    },
+    "colors": {
+      "primary": "#219b95",
+      "secondary": "#a9dfdc"
+    },
+    "abbr": "SJS"
+  },
+  {
+    "name": "Santa Clara",
+    "conference": "WCC",
+    "coach": "Gina Carbonatto",
+    "batting": {
+      "avg": 0.309,
+      "obp": 0.394,
+      "slg": 0.424,
+      "ops": 0.818,
+      "woba": 0.347,
+      "iso": 0.115,
+      "rpg": 5.8
+    },
+    "pitching": {
+      "era": 3.41,
+      "whip": 1.56,
+      "k_per7": 3.9,
+      "k_bb": 1.25
+    },
+    "fielding": {
+      "pct": 0.957
+    },
+    "colors": {
+      "primary": "#882972",
+      "secondary": "#d6a7cb"
+    },
+    "abbr": "SC"
+  },
+  {
+    "name": "Seattle",
+    "conference": "WCC",
+    "coach": "Guy Hirai",
+    "batting": {
+      "avg": 0.297,
+      "obp": 0.361,
+      "slg": 0.464,
+      "ops": 0.825,
+      "woba": 0.364,
+      "iso": 0.167,
+      "rpg": 5.2
+    },
+    "pitching": {
+      "era": 3.43,
+      "whip": 1.58,
+      "k_per7": 5.2,
+      "k_bb": 1.36
+    },
+    "fielding": {
+      "pct": 0.954
+    },
+    "colors": {
+      "primary": "#a11b62",
+      "secondary": "#e1a7c6"
+    },
+    "abbr": "SEAT"
+  },
+  {
+    "name": "Stanford",
+    "conference": "Pac-10",
+    "coach": "Jessica Allister",
+    "batting": {
+      "avg": 0.354,
+      "obp": 0.443,
+      "slg": 0.633,
+      "ops": 1.076,
+      "woba": 0.448,
+      "iso": 0.28,
+      "rpg": 8.1
+    },
+    "pitching": {
+      "era": 3.98,
+      "whip": 1.45,
+      "k_per7": 6.5,
+      "k_bb": 1.4
+    },
+    "fielding": {
+      "pct": 0.971
+    },
+    "colors": {
+      "primary": "#2f6d9c",
+      "secondary": "#b9cede"
+    },
+    "abbr": "STAN"
+  },
+  {
+    "name": "Stanislaus State",
+    "conference": "CCAA",
+    "coach": "Aja Scheuber",
+    "batting": {
+      "avg": 0.245,
+      "obp": 0.325,
+      "slg": 0.313,
+      "ops": 0.638,
+      "woba": 0.283,
+      "iso": 0.068,
+      "rpg": 3
+    },
+    "pitching": {
+      "era": 4.32,
+      "whip": 1.72,
+      "k_per7": 3.6,
+      "k_bb": 1.47
+    },
+    "fielding": {
+      "pct": 0.956
+    },
+    "colors": {
+      "primary": "#a47c1d",
+      "secondary": "#e2d1ab"
+    },
+    "abbr": "STAI"
+  },
+  {
+    "name": "UC Davis",
+    "conference": "BWC",
+    "coach": "Erin Thorpe",
+    "batting": {
+      "avg": 0.242,
+      "obp": 0.33,
+      "slg": 0.338,
+      "ops": 0.668,
+      "woba": 0.271,
+      "iso": 0.096,
+      "rpg": 3
+    },
+    "pitching": {
+      "era": 3.92,
+      "whip": 1.54,
+      "k_per7": 4.2,
+      "k_bb": 2.34
+    },
+    "fielding": {
+      "pct": 0.94
+    },
+    "colors": {
+      "primary": "#b01b20",
+      "secondary": "#e6b1b3"
+    },
+    "abbr": "UD"
+  },
+  {
+    "name": "UC Riverside",
+    "conference": "BWC",
+    "coach": "Brittney Matta",
+    "batting": {
+      "avg": 0.259,
+      "obp": 0.327,
+      "slg": 0.364,
+      "ops": 0.691,
+      "woba": 0.304,
+      "iso": 0.105,
+      "rpg": 3.3
+    },
+    "pitching": {
+      "era": 3.61,
+      "whip": 1.5,
+      "k_per7": 3.9,
+      "k_bb": 1.48
+    },
+    "fielding": {
+      "pct": 0.955
+    },
+    "colors": {
+      "primary": "#ab352a",
+      "secondary": "#e4c1bd"
+    },
+    "abbr": "UR"
+  },
+  {
+    "name": "UC San Diego",
+    "conference": "WCC",
+    "coach": "Nikki Palmer",
+    "batting": {
+      "avg": 0.253,
+      "obp": 0.323,
+      "slg": 0.334,
+      "ops": 0.657,
+      "woba": 0.312,
+      "iso": 0.082,
+      "rpg": 3.6
+    },
+    "pitching": {
+      "era": 4.43,
+      "whip": 1.81,
+      "k_per7": 4.5,
+      "k_bb": 1.02
+    },
+    "fielding": {
+      "pct": 0.953
+    },
+    "colors": {
+      "primary": "#921a84",
+      "secondary": "#dc9cd5"
+    },
+    "abbr": "USD"
+  },
+  {
+    "name": "UC Santa Barbara",
+    "conference": "BWC",
+    "coach": "Chelsea Spencer",
+    "batting": {
+      "avg": 0.285,
+      "obp": 0.376,
+      "slg": 0.444,
+      "ops": 0.82,
+      "woba": 0.34,
+      "iso": 0.159,
+      "rpg": 5.1
+    },
+    "pitching": {
+      "era": 3.92,
+      "whip": 1.53,
+      "k_per7": 3.7,
+      "k_bb": 1.41
+    },
+    "fielding": {
+      "pct": 0.968
+    },
+    "colors": {
+      "primary": "#823225",
+      "secondary": "#d4a69f"
+    },
+    "abbr": "USB"
+  },
+  {
+    "name": "UCLA",
+    "conference": "Pac-10",
+    "coach": "Kelly Inouye-Perez",
+    "batting": {
+      "avg": 0.34,
+      "obp": 0.434,
+      "slg": 0.591,
+      "ops": 1.025,
+      "woba": 0.407,
+      "iso": 0.251,
+      "rpg": 7.1
+    },
+    "pitching": {
+      "era": 2.47,
+      "whip": 1.07,
+      "k_per7": 7.7,
+      "k_bb": 4.23
+    },
+    "fielding": {
+      "pct": 0.978
+    },
+    "colors": {
+      "primary": "#24607e",
+      "secondary": "#9cc0d3"
+    },
+    "abbr": "UCLA"
+  },
+  {
+    "name": "UNLV",
+    "conference": "MWC",
+    "coach": "Kristie Fox",
+    "batting": {
+      "avg": 0.277,
+      "obp": 0.37,
+      "slg": 0.43,
+      "ops": 0.8,
+      "woba": 0.34,
+      "iso": 0.153,
+      "rpg": 4.7
+    },
+    "pitching": {
+      "era": 4.49,
+      "whip": 1.71,
+      "k_per7": 3.7,
+      "k_bb": 1.11
+    },
+    "fielding": {
+      "pct": 0.973
+    },
+    "colors": {
+      "primary": "#1fa194",
+      "secondary": "#ace1db"
+    },
+    "abbr": "UNLV"
+  },
+  {
+    "name": "Vanguard",
+    "conference": "PWC",
+    "coach": "Nicole Thomas",
+    "batting": {
+      "avg": 0.29,
+      "obp": 0.367,
+      "slg": 0.424,
+      "ops": 0.79,
+      "woba": 0.336,
+      "iso": 0.134,
+      "rpg": 4.738
+    },
+    "pitching": {
+      "era": 3.725,
+      "whip": 1.516,
+      "k_per7": 4.275,
+      "k_bb": 1.68
+    },
+    "fielding": {
+      "pct": 0.962
+    },
+    "colors": {
+      "primary": "#5520b0",
+      "secondary": "#c8b7e5"
+    },
+    "abbr": "VANG"
+  },
+  {
+    "name": "Washington",
+    "conference": "Pac-10",
+    "coach": "Heather Tarr",
+    "batting": {
+      "avg": 0.291,
+      "obp": 0.379,
+      "slg": 0.518,
+      "ops": 0.897,
+      "woba": 0.36,
+      "iso": 0.227,
+      "rpg": 6
+    },
+    "pitching": {
+      "era": 3.1,
+      "whip": 1.2,
+      "k_per7": 7.5,
+      "k_bb": 3.7
+    },
+    "fielding": {
+      "pct": 0.973
+    },
+    "colors": {
+      "primary": "#274fa4",
+      "secondary": "#b6c4e1"
+    },
+    "abbr": "WASH"
+  },
+  {
+    "name": "Western Oregon",
+    "conference": "GNAC",
+    "coach": "Aly Boytz",
+    "batting": {
+      "avg": 0.258,
+      "obp": 0.331,
+      "slg": 0.332,
+      "ops": 0.663,
+      "woba": 0.31,
+      "iso": 0.074,
+      "rpg": 3.1
+    },
+    "pitching": {
+      "era": 6.63,
+      "whip": 2.28,
+      "k_per7": 3.7,
+      "k_bb": 0.74
+    },
+    "fielding": {
+      "pct": 0.942
+    },
+    "colors": {
+      "primary": "#50972f",
+      "secondary": "#c2dcb5"
+    },
+    "abbr": "WO"
+  },
+  {
+    "name": "Western Washington",
+    "conference": "GNAC",
+    "coach": "Sheryl Gilmore",
+    "batting": {
+      "avg": 0.327,
+      "obp": 0.394,
+      "slg": 0.475,
+      "ops": 0.869,
+      "woba": 0.355,
+      "iso": 0.148,
+      "rpg": 6.1
+    },
+    "pitching": {
+      "era": 2.03,
+      "whip": 1.11,
+      "k_per7": 4.9,
+      "k_bb": 2.86
+    },
+    "fielding": {
+      "pct": 0.974
+    },
+    "colors": {
+      "primary": "#4a8c1b",
+      "secondary": "#b4da99"
+    },
+    "abbr": "WW"
+  }
+]

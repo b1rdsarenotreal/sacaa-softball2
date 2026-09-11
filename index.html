@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SACAA Softball — West Coast Fastpitch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥎</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <span class="brand-mark">SACAA</span>
+      <span class="brand-sub">Southwest &amp; Coastal Amateur Athletic Assoc. — Softball</span>
+    </div>
+    <div class="season-status" id="seasonStatus">
+      <span class="status-label">Week</span>
+      <span class="status-value" id="weekIndicator">—</span>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="schedule">Schedule</button>
+  <button class="tab" data-tab="standings">Standings</button>
+  <button class="tab" data-tab="rankings">Rankings</button>
+  <button class="tab" data-tab="postseason">Postseason</button>
+  <button class="tab" data-tab="teams">Teams</button>
+</nav>
+
+<main id="app">
+
+  <section class="controls">
+    <button id="btnSimWeek" class="btn btn-primary">Sim Week</button>
+    <button id="btnSimToEnd" class="btn">Sim to End of Regular Season</button>
+    <button id="btnSimPostseason" class="btn btn-accent" disabled>Sim Postseason</button>
+    <button id="btnReset" class="btn btn-ghost">New Season</button>
+    <span id="simMessage" class="sim-message"></span>
+  </section>
+
+  <section id="view-schedule" class="view active">
+    <div class="view-header">
+      <h2>Weekly Schedule</h2>
+      <div class="week-nav">
+        <button id="weekPrev" class="btn btn-ghost btn-small">‹</button>
+        <select id="weekSelect"></select>
+        <button id="weekNext" class="btn btn-ghost btn-small">›</button>
+      </div>
+    </div>
+    <div id="scheduleList" class="game-list"></div>
+  </section>
+
+  <section id="view-standings" class="view">
+    <div class="view-header">
+      <h2>Conference Standings</h2>
+    </div>
+    <div id="standingsGrid" class="standings-grid"></div>
+  </section>
+
+  <section id="view-rankings" class="view">
+    <div class="view-header">
+      <h2>Top 25 Poll</h2>
+      <p class="view-note">RPI-style composite: 25% record, 50% opponents' record, 25% opponents' opponents' record.</p>
+    </div>
+    <ol id="rankingsList" class="rankings-list"></ol>
+  </section>
+
+  <section id="view-postseason" class="view">
+    <div class="view-header">
+      <h2>Postseason</h2>
+    </div>
+    <div id="postseasonContent"></div>
+  </section>
+
+  <section id="view-teams" class="view">
+    <div class="view-header">
+      <h2>Teams</h2>
+    </div>
+    <div id="teamsGrid" class="teams-grid"></div>
+  </section>
+
+</main>
+
+<div id="teamModalOverlay" class="modal-overlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <button id="modalClose" class="modal-close" aria-label="Close">×</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<input type="file" id="logoFileInput" accept="image/*" style="display:none">
+
+<footer class="site-footer">
+  <p>Fictional West Coast D1/D2 softball world. Simulated locally in your browser — nothing leaves your machine.</p>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
