@@ -134,8 +134,47 @@ function freshState(seed) {
   };
 }
 
+// Match/bracket objects from postseason.js embed full roster + team objects
+// on every participant (needed internally for simulation) plus a full box
+// score per game -- none of which the UI ever reads (it only uses `.name`).
+// Left in place, this duplicates a team's entire 25-player roster across
+// every match it appears in, which is by far the largest thing in a saved
+// season (megabytes, not the low hundreds of KB it should be) and was
+// pushing some users over the browser's storage quota. Strip it before it
+// ever gets rendered or saved.
+function stripHeavyFieldsDeep(obj, seen = new Set()) {
+  if (obj && typeof obj === 'object' && seen.has(obj)) return;
+  if (Array.isArray(obj)) {
+    obj.forEach((x) => stripHeavyFieldsDeep(x, seen));
+  } else if (obj && typeof obj === 'object') {
+    seen.add(obj);
+    delete obj.roster;
+    delete obj.team;
+    delete obj.boxscore;
+    Object.values(obj).forEach((v) => stripHeavyFieldsDeep(v, seen));
+  }
+}
+
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.error('Failed to save season:', err);
+    throw new Error(
+      err && err.name === 'QuotaExceededError'
+        ? "Your browser's storage is full. Try clearing old data (see the New Season button's tooltip) or removing some custom logos."
+        : `Failed to save: ${(err && err.message) || err}`
+    );
+  }
+}
+
+// A couple of earlier versions of this app used different localStorage key
+// names as the save-data shape changed; those old entries never got cleaned
+// up and just sit there taking up quota. Clear known-obsolete keys once.
+function cleanupLegacyStorage() {
+  ['sacaa-season-v1'].forEach((key) => {
+    if (key !== STORAGE_KEY) localStorage.removeItem(key);
+  });
 }
 
 // If a saved season predates the current data shape (e.g. an older version
@@ -148,6 +187,10 @@ function loadState() {
   try {
     const parsed = JSON.parse(raw);
     if (parsed.schemaVersion !== SCHEMA_VERSION) return null;
+    // A save from before the postseason-bloat fix may still be carrying full
+    // roster/team/boxscore copies on every match; strip them on load too so
+    // re-saving (which happens right after load) actually shrinks it.
+    if (parsed.postseason) stripHeavyFieldsDeep(parsed.postseason);
     return parsed;
   } catch {
     return null;
@@ -257,7 +300,9 @@ function simPostseason() {
     const winners = regionals.map((m) => m.winner);
     const worldSeries = runWorldSeries(winners, LEAGUE, state.seed + 202);
 
-    state.postseason = { conferenceTournaments, field, regionals, worldSeries };
+    const postseason = { conferenceTournaments, field, regionals, worldSeries };
+    stripHeavyFieldsDeep(postseason);
+    state.postseason = postseason;
     saveState();
     renderAll();
     setMessage(`National Champion: ${worldSeries.champion.name}!`);
@@ -957,6 +1002,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 async function init() {
   try {
+    cleanupLegacyStorage();
     await loadTeams();
     loadCustomLogos();
     state = loadState() || freshState(Date.now() % 1000000);
