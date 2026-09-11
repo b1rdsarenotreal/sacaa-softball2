@@ -207,7 +207,7 @@ function simWeek() {
     setMessage(`Week ${week} simulated (${weekGames.length} games).`);
   } catch (err) {
     console.error('Week simulation failed:', err);
-    setMessage('Something went wrong simulating that week — try "New Season" to reset.');
+    setMessage(`Week simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
   }
 }
 
@@ -223,7 +223,7 @@ function simToEnd() {
     setMessage('Regular season complete.');
   } catch (err) {
     console.error('Season simulation failed:', err);
-    setMessage('Something went wrong simulating the season — try "New Season" to reset.');
+    setMessage(`Season simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
   }
 }
 
@@ -263,7 +263,7 @@ function simPostseason() {
     setMessage(`National Champion: ${worldSeries.champion.name}!`);
   } catch (err) {
     console.error('Postseason simulation failed:', err);
-    setMessage('Something went wrong simulating the postseason — try "New Season" to reset.');
+    setMessage(`Postseason simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
   }
 }
 

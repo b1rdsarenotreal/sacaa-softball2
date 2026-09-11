@@ -146,9 +146,18 @@ const LINEUP_SUB_CHANCE = 0.16; // odds a given lineup slot goes to a bench play
 function selectGameLineup(gameRoster, rng) {
   const bench = gameRoster.bench || [];
   if (bench.length === 0) return gameRoster.lineup;
+  // Each lineup slot independently rolls a chance to be given to a bench
+  // player, but two different slots must never land on the SAME bench
+  // player in the same game -- the batting box is keyed by player id, so a
+  // collision would silently collapse two lineup slots into one (an
+  // 8-player lineup). Track who's already been used this game.
+  const usedBenchIds = new Set();
   return gameRoster.lineup.map((starter) => {
     if (rng() < LINEUP_SUB_CHANCE) {
-      const sub = bench[Math.floor(rng() * bench.length)];
+      const available = bench.filter((p) => !usedBenchIds.has(p.id));
+      if (available.length === 0) return starter; // bench exhausted this game
+      const sub = available[Math.floor(rng() * available.length)];
+      usedBenchIds.add(sub.id);
       return { ...sub, battingOrder: starter.battingOrder, position: starter.position, starterId: starter.id };
     }
     return starter;
