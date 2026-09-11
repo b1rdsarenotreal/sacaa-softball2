@@ -9,6 +9,84 @@ const STORAGE_KEY = 'sacaa-season-v2'; // bumped from v1: roster shape changed f
 const SCHEMA_VERSION = 2;
 const LOGO_STORAGE_KEY = 'sacaa-custom-logos-v1';
 
+// --- IndexedDB ---------------------------------------------------------
+// IndexedDB instead of localStorage: its practical quota is tied to
+// available disk space (effectively hundreds of MB+) rather than
+// localStorage's fixed ~5-10MB per-origin cap, and it stores structured
+// data directly (no JSON.stringify/parse round-trip needed). The API is
+// async, so every read/write path below awaits it.
+const DB_NAME = 'sacaa-db';
+const DB_VERSION = 1;
+const STORE_NAME = 'kv';
+let dbPromise = null;
+
+function openDB() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('This browser does not support IndexedDB.')); return; }
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Failed to open IndexedDB'));
+  });
+  return dbPromise;
+}
+
+async function idbGet(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSet(key, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const req = tx.objectStore(STORE_NAME).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbDelete(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const req = tx.objectStore(STORE_NAME).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// One-time migration: anything already saved under localStorage (from
+// before the IndexedDB switch) gets copied over, then the old copy is
+// cleared out so it stops counting against the localStorage quota.
+async function migrateFromLocalStorage() {
+  try {
+    const oldSeason = localStorage.getItem(STORAGE_KEY);
+    if (oldSeason) {
+      await idbSet(STORAGE_KEY, JSON.parse(oldSeason));
+      localStorage.removeItem(STORAGE_KEY);
+    }
+    localStorage.removeItem('sacaa-season-v1'); // even older format, no longer usable
+
+    const oldLogos = localStorage.getItem(LOGO_STORAGE_KEY);
+    if (oldLogos) {
+      await idbSet(LOGO_STORAGE_KEY, JSON.parse(oldLogos));
+      localStorage.removeItem(LOGO_STORAGE_KEY);
+    }
+  } catch (err) {
+    console.error('localStorage -> IndexedDB migration failed (continuing without it):', err);
+  }
+}
+
 let TEAMS = [];
 let TEAMS_BY_NAME = {};
 let CONFERENCES = {};
@@ -19,19 +97,21 @@ let state = null;
 let customLogos = {};
 let pendingLogoTeam = null;
 
-function loadCustomLogos() {
+async function loadCustomLogos() {
   try {
-    customLogos = JSON.parse(localStorage.getItem(LOGO_STORAGE_KEY) || '{}');
-  } catch {
+    customLogos = (await idbGet(LOGO_STORAGE_KEY)) || {};
+  } catch (err) {
+    console.error('Failed to load custom logos:', err);
     customLogos = {};
   }
 }
 
-function saveCustomLogos() {
+async function saveCustomLogos() {
   try {
-    localStorage.setItem(LOGO_STORAGE_KEY, JSON.stringify(customLogos));
-  } catch {
-    alert("Couldn't save that logo — it may be too large. Try a smaller image.");
+    await idbSet(LOGO_STORAGE_KEY, customLogos);
+  } catch (err) {
+    console.error('Failed to save logo:', err);
+    alert(`Couldn't save that logo: ${(err && err.message) || err}`);
   }
 }
 
@@ -60,14 +140,14 @@ function resizeImageFile(file, maxSize, callback) {
   reader.readAsDataURL(file);
 }
 
-function setCustomLogo(teamName, dataUrl) {
+async function setCustomLogo(teamName, dataUrl) {
   customLogos[teamName] = dataUrl;
-  saveCustomLogos();
+  await saveCustomLogos();
 }
 
-function clearCustomLogo(teamName) {
+async function clearCustomLogo(teamName) {
   delete customLogos[teamName];
-  saveCustomLogos();
+  await saveCustomLogos();
 }
 
 // Any already-rendered view showing badges needs a refresh after a logo
@@ -84,7 +164,7 @@ function refreshAfterLogoChange(teamName) {
 
 function wireLogoUpload() {
   const fileInput = document.getElementById('logoFileInput');
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     const uploadBtn = e.target.closest('[data-upload-team]');
     if (uploadBtn) {
       pendingLogoTeam = uploadBtn.dataset.uploadTeam;
@@ -93,7 +173,7 @@ function wireLogoUpload() {
     }
     const resetBtn = e.target.closest('[data-reset-logo-team]');
     if (resetBtn) {
-      clearCustomLogo(resetBtn.dataset.resetLogoTeam);
+      await clearCustomLogo(resetBtn.dataset.resetLogoTeam);
       refreshAfterLogoChange(resetBtn.dataset.resetLogoTeam);
     }
   });
@@ -102,8 +182,8 @@ function wireLogoUpload() {
     fileInput.value = '';
     if (!file || !pendingLogoTeam) return;
     if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
-    resizeImageFile(file, 160, (dataUrl) => {
-      setCustomLogo(pendingLogoTeam, dataUrl);
+    resizeImageFile(file, 160, async (dataUrl) => {
+      await setCustomLogo(pendingLogoTeam, dataUrl);
       refreshAfterLogoChange(pendingLogoTeam);
     });
   });
@@ -157,53 +237,40 @@ function stripHeavyFieldsDeep(obj, seen = new Set()) {
   }
 }
 
-function saveState() {
+async function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    await idbSet(STORAGE_KEY, state);
   } catch (err) {
     console.error('Failed to save season:', err);
-    throw new Error(
-      err && err.name === 'QuotaExceededError'
-        ? "Your browser's storage is full. Try clearing old data (see the New Season button's tooltip) or removing some custom logos."
-        : `Failed to save: ${(err && err.message) || err}`
-    );
+    throw new Error(`Failed to save: ${(err && err.message) || err}`);
   }
-}
-
-// A couple of earlier versions of this app used different localStorage key
-// names as the save-data shape changed; those old entries never got cleaned
-// up and just sit there taking up quota. Clear known-obsolete keys once.
-function cleanupLegacyStorage() {
-  ['sacaa-season-v1'].forEach((key) => {
-    if (key !== STORAGE_KEY) localStorage.removeItem(key);
-  });
 }
 
 // If a saved season predates the current data shape (e.g. an older version
 // of the roster/player format), silently loading it would crash the sim the
 // first time it touches a field that no longer exists. Rather than let that
 // happen, treat a schema mismatch the same as "no save" and start fresh.
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
+async function loadState() {
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = await idbGet(STORAGE_KEY);
+    if (!parsed) return null;
     if (parsed.schemaVersion !== SCHEMA_VERSION) return null;
     // A save from before the postseason-bloat fix may still be carrying full
     // roster/team/boxscore copies on every match; strip them on load too so
     // re-saving (which happens right after load) actually shrinks it.
     if (parsed.postseason) stripHeavyFieldsDeep(parsed.postseason);
     return parsed;
-  } catch {
+  } catch (err) {
+    console.error('Failed to load saved season:', err);
     return null;
   }
 }
 
-function newSeason() {
+async function newSeason() {
   try {
     state = freshState(Date.now() % 1000000);
     postseasonFullCache = null;
-    saveState();
+    await saveState();
     renderAll();
     setMessage('New season generated: 56 teams, 13-week schedule.');
   } catch (err) {
@@ -219,7 +286,7 @@ function gameRosterFor(teamName, gameOfSeries) {
   return buildGameRoster(teamName, roster, team, starter);
 }
 
-// Regular-season box scores are NOT persisted (they'd bloat localStorage --
+// Regular-season box scores are NOT persisted (they'd add a lot of bulk --
 // ~1,200 games x ~24 player lines each). Since the sim is fully seeded and
 // deterministic, we just re-run the exact same game on demand whenever a box
 // score is actually needed (e.g. opening the box score modal, or building a
@@ -231,7 +298,7 @@ function regenerateGameResult(game) {
   return simulateGame(awayGR, homeGR, LEAGUE, game.id * 7919 + state.seed);
 }
 
-function simWeek() {
+async function simWeek() {
   if (state.regularSeasonComplete) return;
   try {
     const week = state.currentWeek;
@@ -248,7 +315,7 @@ function simWeek() {
     } else {
       state.currentWeek = week + 1;
     }
-    saveState();
+    await saveState();
     renderAll();
     setMessage(`Week ${week} simulated (${weekGames.length} games).`);
   } catch (err) {
@@ -257,14 +324,14 @@ function simWeek() {
   }
 }
 
-function simToEnd() {
+async function simToEnd() {
   try {
     let guard = 0;
     while (!state.regularSeasonComplete && guard < 20) {
       simWeekQuiet();
       guard += 1;
     }
-    saveState();
+    await saveState();
     renderAll();
     setMessage('Regular season complete.');
   } catch (err) {
@@ -316,7 +383,7 @@ function getPostseasonFull() {
   return postseasonFullCache;
 }
 
-function simPostseason() {
+async function simPostseason() {
   if (!state.regularSeasonComplete) return;
   try {
     postseasonFullCache = computePostseasonResult();
@@ -327,7 +394,7 @@ function simPostseason() {
       return value;
     }));
     state.postseason = postseason;
-    saveState();
+    await saveState();
     renderAll();
     setMessage(`National Champion: ${champion}!`);
   } catch (err) {
@@ -1108,11 +1175,11 @@ window.addEventListener('unhandledrejection', (e) => {
 
 async function init() {
   try {
-    cleanupLegacyStorage();
+    await migrateFromLocalStorage();
     await loadTeams();
-    loadCustomLogos();
-    state = loadState() || freshState(Date.now() % 1000000);
-    saveState();
+    await loadCustomLogos();
+    state = (await loadState()) || freshState(Date.now() % 1000000);
+    await saveState();
     wireTabs();
     wireControls();
     wireTeamModal();
