@@ -1,12 +1,12 @@
 import { generateSchedule } from './engine/schedule.js';
 import { computeLeagueAverages, simulateGame } from './engine/sim.js';
-import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers, computeProgramPrestige } from './engine/roster.js';
+import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers, computeProgramPrestige, computeTeamTalents, advanceRosterOneSeason } from './engine/roster.js';
 import { computeStandings, standingsByConference, overallStandings } from './engine/standings.js';
 import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rankings.js';
 import { runConferenceTournament, selectField, runRegionals, runWorldSeries, roundLabel } from './engine/postseason.js';
 
-const STORAGE_KEY = 'sacaa-season-v2'; // bumped from v1: roster shape changed from stat-based to ratings-based
-const SCHEMA_VERSION = 2;
+const STORAGE_KEY = 'sacaa-season-v2';
+const SCHEMA_VERSION = 3; // bumped from 2: added dynasty fields (history, dynastyYear, lastHomeMap)
 const LOGO_STORAGE_KEY = 'sacaa-custom-logos-v1';
 
 // --- IndexedDB ---------------------------------------------------------
@@ -207,6 +207,9 @@ function freshState(seed) {
   return {
     schemaVersion: SCHEMA_VERSION,
     seed,
+    dynastyYear: 1,
+    history: [],
+    lastHomeMap: schedule.homeMap,
     totalWeeks: schedule.totalWeeks,
     currentWeek: 1,
     games: schedule.games,
@@ -497,9 +500,98 @@ async function simPostseason() {
   }
 }
 
+// Snapshots the just-finished season into state.history: team records, team
+// rate stats, every player's stat line, and postseason results. This has to
+// happen BEFORE rosters/games get replaced by the next season, since once
+// that happens there's no regenerating this season's box scores anymore --
+// this compact archive is what team/player profiles read for career history.
+function archiveSeason() {
+  const { teamTotals, playerBatting, playerPitching } = computeLeagueStats();
+  const standings = computeStandings(TEAMS, allCountedGames());
+
+  const teamRecords = {};
+  standings.forEach((r) => {
+    teamRecords[r.name] = { wins: r.wins, losses: r.losses, confWins: r.confWins, confLosses: r.confLosses, conference: r.conference };
+  });
+
+  const teamStats = {};
+  teamTotals.forEach((t) => {
+    teamStats[t.name] = { avg: t.avg, obp: t.obp, slg: t.slg, era: t.era, whip: t.whip, hr: t.hr };
+  });
+
+  const playerStats = {};
+  playerBatting.forEach((p) => {
+    if (!playerStats[p.playerId]) playerStats[p.playerId] = { name: p.name, number: p.number, team: p.team, class: p.class };
+    playerStats[p.playerId].batting = {
+      ab: p.ab, h: p.h, bb: p.bb, r: p.r, rbi: p.rbi, hr: p.hr, doubles: p.doubles, triples: p.triples, k: p.k,
+    };
+  });
+  playerPitching.forEach((p) => {
+    if (!playerStats[p.playerId]) playerStats[p.playerId] = { name: p.name, number: p.number, team: p.team, class: p.class };
+    playerStats[p.playerId].pitching = { outs: p.outs, h: p.h, er: p.er, bb: p.bb, k: p.k, w: p.w, l: p.l, sv: p.sv };
+  });
+
+  let conferenceChamps = {};
+  let nationalChampion = null;
+  if (state.postseason) {
+    conferenceChamps = Object.fromEntries(state.postseason.conferenceTournaments.map((ct) => [ct.conference, ct.champion.name]));
+    nationalChampion = state.postseason.worldSeries.champion.name;
+  }
+
+  state.history.push({
+    year: state.dynastyYear,
+    teamRecords, teamStats, playerStats, conferenceChamps, nationalChampion,
+  });
+}
+
+// The dynasty-continuation action: archive the just-finished season, age
+// every roster forward a year (graduation + recruiting -- see
+// advanceRosterOneSeason), generate next year's schedule (flipping
+// conference home/away from this year where possible), and reset for a new
+// regular season under a new year number. Distinct from "New Season", which
+// starts a brand new independent dynasty and wipes history.
+async function advanceToNextSeason() {
+  if (!state.postseason) return;
+  try {
+    archiveSeason();
+
+    const talents = computeTeamTalents(TEAMS);
+    const newRosters = {};
+    TEAMS.forEach((t, i) => {
+      newRosters[t.name] = advanceRosterOneSeason(
+        state.rosters[t.name], t, talents[t.name],
+        state.seed + state.dynastyYear * 7919 + i * 131
+      );
+    });
+
+    const newSeed = (state.seed + state.dynastyYear * 10007) % 100000000;
+    const schedule = generateSchedule(TEAMS, newSeed, state.lastHomeMap || {});
+
+    state.dynastyYear += 1;
+    state.seed = newSeed;
+    state.rosters = newRosters;
+    state.games = schedule.games;
+    state.totalWeeks = schedule.totalWeeks;
+    state.lastHomeMap = schedule.homeMap;
+    state.currentWeek = 1;
+    state.regularSeasonComplete = false;
+    state.postseason = null;
+    postseasonFullCache = null;
+
+    await saveState();
+    renderAll();
+    setMessage(`Advanced to Year ${state.dynastyYear}: seniors graduated, new recruits signed, schedule regenerated.`);
+  } catch (err) {
+    console.error('Advance to Next Season failed:', err);
+    setMessage(`Couldn't advance to next season: ${(err && err.message) || err}`);
+  }
+}
+
 function outsToIp(outs) {
   return `${Math.floor(outs / 3)}.${outs % 3}`;
 }
+
+
 
 // Aggregates a team's individual player stats across every game played so
 // far, by re-simulating each game (see regenerateGameResult) and summing box
@@ -748,15 +840,17 @@ function renderAll() {
 
 function renderStatus() {
   const el = document.getElementById('weekIndicator');
-  if (state.postseason) el.textContent = 'Postseason complete';
-  else if (state.regularSeasonComplete) el.textContent = 'Regular season complete';
-  else el.textContent = `${state.currentWeek} of ${state.totalWeeks}`;
+  const yearPrefix = `Year ${state.dynastyYear} — `;
+  if (state.postseason) el.textContent = yearPrefix + 'Postseason complete';
+  else if (state.regularSeasonComplete) el.textContent = yearPrefix + 'Regular season complete';
+  else el.textContent = yearPrefix + `${state.currentWeek} of ${state.totalWeeks}`;
 }
 
 function renderControls() {
   document.getElementById('btnSimWeek').disabled = state.regularSeasonComplete;
   document.getElementById('btnSimToEnd').disabled = state.regularSeasonComplete;
   document.getElementById('btnSimPostseason').disabled = !state.regularSeasonComplete || !!state.postseason;
+  document.getElementById('btnAdvanceYear').disabled = !state.postseason;
 }
 
 function teamRecordThrough(games, teamName, uptoWeek) {
@@ -1142,6 +1236,27 @@ function openPlayerModal(teamName, playerId) {
     ? `Two-Way — ${hitterInfo.position} / ${pitcherInfo.role}`
     : pitcherInfo ? pitcherInfo.role : hitterInfo.position;
 
+  // Career history: this player's stat line from every past dynasty season
+  // they appeared in (only returning players carry a stable id across
+  // years, so recruits simply won't have any history entries yet).
+  const careerHistory = state.history
+    .map((h) => ({ year: h.year, stats: h.playerStats[playerId] }))
+    .filter((h) => h.stats);
+  const careerRows = careerHistory.map((h) => {
+    const s = h.stats;
+    let battingLine = '—';
+    if (s.batting && s.batting.ab > 0) {
+      const avg = s.batting.h / s.batting.ab;
+      battingLine = `${avg.toFixed(3).replace(/^0/, '')} AVG, ${s.batting.hr} HR, ${s.batting.rbi} RBI`;
+    }
+    let pitchingLine = '—';
+    if (s.pitching && s.pitching.outs > 0) {
+      const era = ((s.pitching.er * 21) / s.pitching.outs).toFixed(2);
+      pitchingLine = `${s.pitching.w}-${s.pitching.l}, ${era} ERA, ${s.pitching.k} K`;
+    }
+    return `<tr><td>Year ${h.year}</td><td>${s.class}</td><td>${battingLine}</td><td>${pitchingLine}</td></tr>`;
+  }).join('');
+
   // Season totals, rolled up from the game log.
   const bt = battingLog.reduce((acc, b) => {
     acc.ab += b.ab; acc.h += b.h; acc.bb += b.bb; acc.r += b.r; acc.rbi += b.rbi;
@@ -1205,6 +1320,14 @@ function openPlayerModal(teamName, playerId) {
         <tbody><tr><td>${pitcherInfo.ratings.stuff}</td><td>${pitcherInfo.ratings.control}</td><td>${pitcherInfo.ratings.movement}</td></tr></tbody>
       </table>` : ''}
     </div>
+
+    ${careerRows ? `
+    <div class="tp-schedule-title">Career</div>
+    <table class="standings-table tp-mini-table">
+      <thead><tr><th>Year</th><th>Class</th><th>Batting</th><th>Pitching</th></tr></thead>
+      <tbody>${careerRows}</tbody>
+    </table>
+    ` : ''}
 
     ${battingLog.length > 0 || pitchingLog.length > 0 ? `<p class="tp-team-totals">${[battingSummary, pitchingSummary].filter(Boolean).join(' &nbsp;|&nbsp; ')}</p>` : '<p class="view-note">No games played yet.</p>'}
 
@@ -1291,6 +1414,25 @@ function openTeamModal(name) {
   const row = standings.find((r) => r.name === name) || {
     wins: 0, losses: 0, confWins: 0, confLosses: 0, runDiff: 0,
   };
+
+  // Dynasty history: past seasons' records for this team, and the coach's
+  // cumulative record across the whole dynasty (including the season in
+  // progress).
+  const teamHistory = state.history
+    .map((h) => ({
+      year: h.year,
+      record: h.teamRecords[name],
+      confChamp: h.conferenceChamps[team.conference] === name,
+      natChamp: h.nationalChampion === name,
+    }))
+    .filter((h) => h.record);
+  const coachWins = teamHistory.reduce((sum, h) => sum + h.record.wins, 0) + row.wins;
+  const coachLosses = teamHistory.reduce((sum, h) => sum + h.record.losses, 0) + row.losses;
+  const seasonsCoached = teamHistory.length + 1;
+  const historyRows = teamHistory.slice().reverse().map((h) => {
+    const postseasonNote = h.natChamp ? 'National Champion' : h.confChamp ? 'Conf. Tournament Champion' : '';
+    return `<tr><td>Year ${h.year}</td><td>${h.record.wins}-${h.record.losses}</td><td>${h.record.confWins}-${h.record.confLosses}</td><td>${postseasonNote}</td></tr>`;
+  }).join('');
 
   const games = state.games
     .filter((g) => g.home === name || g.away === name)
@@ -1380,7 +1522,7 @@ function openTeamModal(name) {
       </div>
       <div>
         <h2>${team.name}</h2>
-        <p class="tp-sub">${conferenceLink(team.conference)} · Head Coach ${team.coach}</p>
+        <p class="tp-sub">${conferenceLink(team.conference)} · Head Coach ${team.coach} (${coachWins}-${coachLosses}, ${seasonsCoached} season${seasonsCoached > 1 ? 's' : ''})</p>
         <p class="tp-sub tp-tiers">Historically: ${PROGRAM_TIERS[team.name]?.battingTier || '—'} hitting · ${PROGRAM_TIERS[team.name]?.pitchingTier || '—'} pitching</p>
         <p class="tp-logo-actions">
           <button class="link-btn" data-upload-team="${team.name}">Upload logo</button>
@@ -1394,6 +1536,14 @@ function openTeamModal(name) {
       <div class="tp-record-box"><span class="num">${rd}</span><span class="label">run diff</span></div>
     </div>
     ${games.some((g) => g.played) ? `<p class="tp-team-totals">Season: AVG ${teamTotals.avg.toFixed(3).replace(/^0/, '')} · OBP ${teamTotals.obp.toFixed(3).replace(/^0/, '')} · SLG ${teamTotals.slg.toFixed(3).replace(/^0/, '')} &nbsp;|&nbsp; ERA ${teamTotals.era.toFixed(2)} · WHIP ${teamTotals.whip.toFixed(2)}</p>` : ''}
+
+    ${teamHistory.length > 0 ? `
+    <div class="tp-schedule-title">Dynasty History</div>
+    <table class="standings-table tp-mini-table">
+      <thead><tr><th>Year</th><th>Record</th><th>Conf</th><th>Postseason</th></tr></thead>
+      <tbody>${historyRows}</tbody>
+    </table>
+    ` : ''}
 
     <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
     <div class="tp-roster-tables">
@@ -1600,9 +1750,10 @@ function wireControls() {
   document.getElementById('btnSimWeek').addEventListener('click', simWeek);
   document.getElementById('btnSimToEnd').addEventListener('click', simToEnd);
   document.getElementById('btnSimPostseason').addEventListener('click', simPostseason);
+  document.getElementById('btnAdvanceYear').addEventListener('click', advanceToNextSeason);
   document.getElementById('leaderConfFilter').addEventListener('change', renderLeaders);
   document.getElementById('btnReset').addEventListener('click', () => {
-    if (confirm('Start a brand new season? This clears all current results.')) newSeason();
+    if (confirm('Start a brand new dynasty? This clears all current results AND all dynasty history (past seasons, career stats). If you just want next season, use "Advance to Next Season" instead.')) newSeason();
   });
   document.getElementById('weekSelect').addEventListener('change', renderSchedule);
   document.getElementById('weekPrev').addEventListener('click', () => {

@@ -481,3 +481,136 @@ export function buildGameRoster(teamName, roster, team, startingPitcher) {
     fieldingPct: team.fielding.pct,
   };
 }
+
+const CLASS_ORDER = ['FR', 'SO', 'JR', 'SR'];
+function nextClass(cls) {
+  const idx = CLASS_ORDER.indexOf(cls);
+  if (idx === -1 || idx >= CLASS_ORDER.length - 1) return null; // graduates
+  return CLASS_ORDER[idx + 1];
+}
+
+// Advances one team's roster by a year for dynasty mode: seniors graduate,
+// everyone else moves up a class, and enough new freshmen are recruited
+// (talent tied to the team's historical prestige, same source as initial
+// generation) to fill the vacated spots. Returning players keep their id,
+// name, ratings, jersey number, and -- if they're still in the lineup --
+// their defensive position; only recruits get fresh identities and get
+// whatever's left. Pitching staff roles and the batting order are
+// re-ranked fresh each year, since who's the ace or who leads off can
+// reasonably shift as a roster turns over.
+export function advanceRosterOneSeason(roster, team, talents, seed = 1) {
+  const rng = mulberry32(seed);
+  const usedNames = new Set([...roster.lineup, ...roster.bench, ...roster.pitchers].map((p) => p.name));
+  const previousPositions = new Map(roster.lineup.map((p) => [p.id, p.position]));
+
+  // One record per unique real player, merging hitter/pitcher
+  // representations (two-way players have both).
+  const byId = new Map();
+  [...roster.lineup, ...roster.bench].forEach((p) => {
+    if (!byId.has(p.id)) byId.set(p.id, { id: p.id, name: p.name, class: p.class, number: p.number });
+    byId.get(p.id).hitterRatings = p.ratings;
+  });
+  roster.pitchers.forEach((p) => {
+    if (!byId.has(p.id)) byId.set(p.id, { id: p.id, name: p.name, class: p.class, number: p.number });
+    byId.get(p.id).pitcherRatings = p.ratings;
+  });
+
+  const returning = [];
+  let graduatedHitterSlots = 0;
+  let graduatedPitcherSlots = 0;
+  byId.forEach((p) => {
+    const nc = nextClass(p.class);
+    if (nc === null) {
+      if (p.pitcherRatings) graduatedPitcherSlots += 1;
+      else graduatedHitterSlots += 1;
+    } else {
+      p.class = nc;
+      returning.push(p);
+    }
+  });
+
+  const recruitedHitters = [];
+  for (let i = 0; i < graduatedHitterSlots; i++) {
+    recruitedHitters.push({
+      id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
+      hitterRatings: genHitterRatings(talents.batting, rng),
+    });
+  }
+  const recruitedPitchers = [];
+  for (let i = 0; i < graduatedPitcherSlots; i++) {
+    const p = {
+      id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
+      pitcherRatings: genPitcherRatings(talents.pitching, rng, 'RP'),
+    };
+    if (rng() < 0.15) p.hitterRatings = genHitterRatings(talents.batting, rng);
+    recruitedPitchers.push(p);
+  }
+
+  // --- Pitching staff: rank the returning + recruited arms, assign roles fresh ---
+  const pitcherPool = [...returning.filter((p) => p.pitcherRatings), ...recruitedPitchers];
+  const pitcherComposite = (p) => p.pitcherRatings.stuff * 0.5 + p.pitcherRatings.control * 0.3 + p.pitcherRatings.movement * 0.2;
+  const rankedPitchers = [...pitcherPool].sort((a, b) => pitcherComposite(b) - pitcherComposite(a));
+  const pitchers = rankedPitchers.map((p, i) => ({
+    id: p.id,
+    name: p.name,
+    class: p.class,
+    twoWay: !!p.hitterRatings,
+    role: i === 0 ? 'SP1' : i === 1 ? 'SP2' : i === 2 ? 'SP3' : 'RP',
+    ratings: p.pitcherRatings,
+  }));
+
+  // --- Hitting pool: pure hitters (returning + recruited) plus two-way pitchers ---
+  const pureHitterPool = [...returning.filter((p) => p.hitterRatings && !p.pitcherRatings), ...recruitedHitters];
+  const twoWayCandidates = pitchers.filter((p) => p.twoWay).map((p) => {
+    const source = pitcherPool.find((x) => x.id === p.id);
+    return { id: p.id, name: p.name, class: p.class, twoWay: true, pitcherRef: p, ratings: source.hitterRatings };
+  });
+  const pool = [
+    ...pureHitterPool.map((p) => ({ id: p.id, name: p.name, class: p.class, twoWay: false, ratings: p.hitterRatings })),
+    ...twoWayCandidates,
+  ];
+
+  const composite = (p) => p.ratings.contact * 0.4 + p.ratings.power * 0.35 + p.ratings.eye * 0.25;
+  const ranked = [...pool].sort((a, b) => composite(b) - composite(a));
+  const starters = ranked.slice(0, 9);
+  const benchPool = ranked.slice(9);
+
+  // Positions: returning starters keep last year's spot if they're still in
+  // the lineup; anyone new to the lineup takes whatever's left, shuffled.
+  const claimed = new Set();
+  const withPosition = [];
+  const needsPosition = [];
+  starters.forEach((p) => {
+    const prev = previousPositions.get(p.id);
+    if (prev && !claimed.has(prev)) { claimed.add(prev); withPosition.push({ ...p, position: prev }); }
+    else needsPosition.push(p);
+  });
+  const openPositions = shuffle(POSITIONS.filter((pos) => !claimed.has(pos)), rng);
+  needsPosition.forEach((p, i) => { p.position = openPositions[i]; });
+
+  const lineupOrder = orderBattingLineup([...withPosition, ...needsPosition], rng, 13);
+  const lineup = lineupOrder.map((p, i) => ({
+    id: p.id, name: p.name, class: p.class, twoWay: p.twoWay,
+    pitcherRole: p.twoWay ? p.pitcherRef.role : null,
+    battingOrder: i + 1, position: p.position, ratings: p.ratings,
+  }));
+
+  const bench = benchPool.map((p, i) => ({
+    id: p.id, name: p.name, class: p.class, twoWay: p.twoWay,
+    position: BENCH_POSITIONS[i % BENCH_POSITIONS.length], ratings: p.ratings,
+  }));
+
+  // Numbers: returning players keep theirs; recruits get assigned from
+  // whatever's left in the weighted (low-numbers-first) pool.
+  const numbersById = new Map();
+  byId.forEach((p, id) => { if (p.number !== undefined && p.number !== null) numbersById.set(id, p.number); });
+  const takenNumbers = new Set(numbersById.values());
+  const availablePool = weightedNumberPool(rng).filter((n) => !takenNumbers.has(n));
+  let ai = 0;
+  [...lineup, ...bench, ...pitchers].forEach((p) => {
+    if (!numbersById.has(p.id)) numbersById.set(p.id, availablePool[ai++]);
+  });
+  [...lineup, ...bench, ...pitchers].forEach((p) => { p.number = numbersById.get(p.id); });
+
+  return { lineup, bench, pitchers };
+}

@@ -73,7 +73,7 @@ function findPartner(team, pool, used, confOf) {
   return candidate || null;
 }
 
-export function generateSchedule(teams, seed = 1) {
+export function generateSchedule(teams, seed = 1, previousHomeMap = {}) {
   const rng = mulberry32(seed);
   const allNames = teams.map((t) => t.name);
   const confOf = Object.fromEntries(teams.map((t) => [t.name, t.conference]));
@@ -107,6 +107,11 @@ export function generateSchedule(teams, seed = 1) {
   });
 
   // --- Weeks 5-13: conference round robin ---
+  // Conference matchups flip home/away from the previous dynasty season when
+  // we know it (e.g. Arizona hosted Arizona State last year -> Arizona
+  // State hosts this year); falls back to the round/pair parity heuristic
+  // for a brand new season or a first-ever meeting between two teams.
+  const pairKey = (a, b) => [a, b].sort().join('|');
   Object.entries(byConf).forEach(([conf, names]) => {
     const rounds = roundRobinPairings(names, rng);
     rounds.forEach((pairs, roundIdx) => {
@@ -114,9 +119,13 @@ export function generateSchedule(teams, seed = 1) {
       if (week === undefined) return; // conference has more rounds than weeks available (shouldn't happen up to 9 teams)
       const idx = week - 1;
       pairs.forEach(([a, b], pairIdx) => {
-        const aHome = (roundIdx + pairIdx) % 2 === 0;
-        const home = aHome ? a : b;
-        const away = aHome ? b : a;
+        const key = pairKey(a, b);
+        const lastHome = previousHomeMap[key];
+        let home;
+        if (lastHome === a) home = b;
+        else if (lastHome === b) home = a;
+        else home = (roundIdx + pairIdx) % 2 === 0 ? a : b;
+        const away = home === a ? b : a;
         weekPlan[home][idx] = { opponent: away, home: true, conferenceGame: true };
         weekPlan[away][idx] = { opponent: home, home: false, conferenceGame: true };
       });
@@ -187,5 +196,11 @@ export function generateSchedule(teams, seed = 1) {
     }
   });
 
-  return { totalWeeks: TOTAL_WEEKS, games };
+  return {
+    totalWeeks: TOTAL_WEEKS,
+    games,
+    homeMap: Object.fromEntries(
+      series.filter((s) => s.conferenceGame).map((s) => [pairKey(s.home, s.away), s.home])
+    ),
+  };
 }
