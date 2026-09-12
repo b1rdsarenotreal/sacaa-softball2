@@ -117,21 +117,26 @@ async function saveCustomLogos() {
 
 // Reads an uploaded image file, crops it to a centered square, downsizes it
 // (logos don't need to be huge), and hands back a compact PNG data URL.
-function resizeImageFile(file, maxSize, callback) {
+// Reads an uploaded image file and fits it into the badge's aspect ratio
+// (contain, not crop) so the whole logo stays visible -- nothing gets
+// chopped off the way a cover-crop would. Any leftover space is transparent
+// padding; the badge's own background shows through it.
+function resizeImageFile(file, targetWidth, targetHeight, callback) {
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = maxSize;
-      canvas.height = maxSize;
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
       const ctx = canvas.getContext('2d');
-      const scale = Math.max(maxSize / img.width, maxSize / img.height);
-      const sw = maxSize / scale;
-      const sh = maxSize / scale;
-      const sx = (img.width - sw) / 2;
-      const sy = (img.height - sh) / 2;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, maxSize, maxSize);
+      const scale = Math.min(targetWidth / img.width, targetHeight / img.height);
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      const dx = (targetWidth - dw) / 2;
+      const dy = (targetHeight - dh) / 2;
+      ctx.clearRect(0, 0, targetWidth, targetHeight);
+      ctx.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
       callback(canvas.toDataURL('image/png'));
     };
     img.onerror = () => alert("Couldn't read that image file.");
@@ -182,7 +187,7 @@ function wireLogoUpload() {
     fileInput.value = '';
     if (!file || !pendingLogoTeam) return;
     if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
-    resizeImageFile(file, 160, async (dataUrl) => {
+    resizeImageFile(file, 184, 160, async (dataUrl) => {
       await setCustomLogo(pendingLogoTeam, dataUrl);
       refreshAfterLogoChange(pendingLogoTeam);
     });
@@ -1195,7 +1200,7 @@ function renderTeams() {
 }
 
 function teamBadge(name, size = 20, extraClass = '') {
-  const width = Math.round(size * 1.4);
+  const width = Math.round(size * 1.15);
   const customLogo = customLogos[name];
   if (customLogo) {
     return `<img class="team-badge ${extraClass}" width="${width}" height="${size}" src="${customLogo}" alt="${name} logo">`;
@@ -1204,10 +1209,10 @@ function teamBadge(name, size = 20, extraClass = '') {
   if (!team) return '';
   const colors = team.colors || { primary: '#0F3324', secondary: '#D7E600' };
   const initials = (team.abbr || name.slice(0, 3)).slice(0, 3);
-  const fontSize = initials.length >= 3 ? 40 : 52;
-  return `<svg class="team-badge ${extraClass}" width="${width}" height="${size}" viewBox="0 0 140 100" aria-hidden="true">
-    <rect x="4" y="4" width="132" height="92" rx="14" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
-    <text x="70" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
+  const fontSize = initials.length >= 3 ? 34 : 46;
+  return `<svg class="team-badge ${extraClass}" width="${width}" height="${size}" viewBox="0 0 115 100" aria-hidden="true">
+    <rect x="4" y="4" width="107" height="92" rx="14" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
+    <text x="57.5" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
   </svg>`;
 }
 

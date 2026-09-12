@@ -263,12 +263,12 @@ main {
   border-radius: 20%;
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-  object-fit: cover;
+  object-fit: contain;
   background: var(--chalk);
 }
 
 .team-badge-lg {
-  width: 78px;
+  width: 64px;
   height: 56px;
 }
 
@@ -1106,5 +1106,5 @@ main {
   .tp-game-list { grid-template-columns: 1fr; }
   .modal { padding: 20px; }
   .tp-header { gap: 10px; }
-  .team-badge-lg { width: 56px; height: 40px; }
+  .team-badge-lg { width: 46px; height: 40px; }
 }
