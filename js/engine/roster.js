@@ -333,6 +333,25 @@ function buildPitchingStaff(team, talents, rng, usedNames) {
   return { pitchers, hitterCount: 25 - pitcherCount };
 }
 
+// Sorts a set of hitters into a batting order: better hitters generally bat
+// higher, but jitter keeps it from being a rigid formula. `jitterAmount`
+// controls how much shuffling happens -- exported so sim.js can call this
+// fresh every game with a jitter that shrinks as the season goes on (an
+// early-season lineup is still in flux; a late-season one has settled into
+// the coach's preferred order).
+export function orderBattingLineup(players, rng, jitterAmount = 13) {
+  const jitterScore = (base) => base + noise(rng) * jitterAmount;
+  const eyeScored = players.map((p) => ({ p, score: jitterScore(p.ratings.eye + p.ratings.contact) }));
+  const leadoff = eyeScored.sort((a, b) => b.score - a.score).slice(0, 2).map((x) => x.p);
+  const remaining1 = players.filter((p) => !leadoff.includes(p));
+  const powerScored = remaining1.map((p) => ({ p, score: jitterScore(p.ratings.power) }));
+  const heart = powerScored.sort((a, b) => b.score - a.score).slice(0, 3).map((x) => x.p);
+  const remaining2 = remaining1.filter((p) => !heart.includes(p));
+  const restScored = remaining2.map((p) => ({ p, score: jitterScore(p.ratings.contact) }));
+  const rest = restScored.sort((a, b) => b.score - a.score).map((x) => x.p);
+  return [...leadoff, ...heart, ...rest];
+}
+
 function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames) {
   const pureHitters = [];
   for (let i = 0; i < hitterCount; i++) {
@@ -356,21 +375,10 @@ function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames
   const starters = ranked.slice(0, 9);
   const benchPool = ranked.slice(9);
 
-  // Build the batting order: better hitters generally bat higher, but the
-  // exact slotting isn't a rigid formula -- jitter the ranking so the order
-  // varies noticeably team to team and game to game rather than always
-  // being "the two best-OBP hitters lead off, best power bats 3-4-5."
-  const jitterScore = (base) => base + noise(rng) * 13;
-  const eyeScored = starters.map((p) => ({ p, score: jitterScore(p.ratings.eye + p.ratings.contact) }));
-  const leadoff = eyeScored.sort((a, b) => b.score - a.score).slice(0, 2).map((x) => x.p);
-  const remaining1 = starters.filter((p) => !leadoff.includes(p));
-  const powerScored = remaining1.map((p) => ({ p, score: jitterScore(p.ratings.power) }));
-  const heart = powerScored.sort((a, b) => b.score - a.score).slice(0, 3).map((x) => x.p);
-  const remaining2 = remaining1.filter((p) => !heart.includes(p));
-  const restScored = remaining2.map((p) => ({ p, score: jitterScore(p.ratings.contact) }));
-  const rest = restScored.sort((a, b) => b.score - a.score).map((x) => x.p);
-
-  const lineupOrder = [...leadoff, ...heart, ...rest];
+  // This is just the preseason-projected order shown on the roster page --
+  // the order actually used in a given game is recomputed fresh by sim.js
+  // (see orderBattingLineup / LINEUP_JITTER in sim.js).
+  const lineupOrder = orderBattingLineup(starters, rng, 13);
   // Defensive position is independent of batting order -- a team's leadoff
   // hitter is just as likely to play center field as to catch. Shuffle the
   // 9 positions separately rather than assigning them by batting-order slot.

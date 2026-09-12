@@ -292,10 +292,15 @@ function gameRosterFor(teamName, gameOfSeries) {
 // score is actually needed (e.g. opening the box score modal, or building a
 // team's season stat totals). Re-simulating one game takes well under a
 // millisecond, so this is effectively free.
+function seasonProgressForWeek(week) {
+  if (state.totalWeeks <= 1) return 1;
+  return (week - 1) / (state.totalWeeks - 1);
+}
+
 function regenerateGameResult(game) {
   const homeGR = gameRosterFor(game.home, game.gameOfSeries);
   const awayGR = gameRosterFor(game.away, game.gameOfSeries);
-  return simulateGame(awayGR, homeGR, LEAGUE, game.id * 7919 + state.seed);
+  return simulateGame(awayGR, homeGR, LEAGUE, game.id * 7919 + state.seed, seasonProgressForWeek(game.week));
 }
 
 async function simWeek() {
@@ -303,10 +308,11 @@ async function simWeek() {
   try {
     const week = state.currentWeek;
     const weekGames = state.games.filter((g) => g.week === week && !g.played);
+    const progress = seasonProgressForWeek(week);
     weekGames.forEach((g) => {
       const homeGR = gameRosterFor(g.home, g.gameOfSeries);
       const awayGR = gameRosterFor(g.away, g.gameOfSeries);
-      const r = simulateGame(awayGR, homeGR, LEAGUE, g.id * 7919 + state.seed);
+      const r = simulateGame(awayGR, homeGR, LEAGUE, g.id * 7919 + state.seed, progress);
       g.played = true;
       g.result = { homeScore: r.homeScore, awayScore: r.awayScore, innings: r.innings, awayLine: r.awayLine, homeLine: r.homeLine, mercyRule: r.mercyRule };
     });
@@ -343,10 +349,11 @@ async function simToEnd() {
 function simWeekQuiet() {
   const week = state.currentWeek;
   const weekGames = state.games.filter((g) => g.week === week && !g.played);
+  const progress = seasonProgressForWeek(week);
   weekGames.forEach((g) => {
     const homeGR = gameRosterFor(g.home, g.gameOfSeries);
     const awayGR = gameRosterFor(g.away, g.gameOfSeries);
-    const r = simulateGame(awayGR, homeGR, LEAGUE, g.id * 7919 + state.seed);
+    const r = simulateGame(awayGR, homeGR, LEAGUE, g.id * 7919 + state.seed, progress);
     g.played = true;
     g.result = { homeScore: r.homeScore, awayScore: r.awayScore, innings: r.innings, awayLine: r.awayLine, homeLine: r.homeLine, mercyRule: r.mercyRule };
   });
@@ -383,6 +390,61 @@ function getPostseasonFull() {
   return postseasonFullCache;
 }
 
+// Flattens every actually-played postseason game (conference tournaments,
+// regional series, World Series including the losers' bracket and grand
+// final) into the same {home, away, result: {homeScore, awayScore,
+// boxscore}, played} shape state.games uses, so standings/stats functions
+// that already know how to read that shape can include the postseason
+// without needing their own special case. Pulled from the full (unstripped)
+// postseason -- see getPostseasonFull -- since box scores are needed.
+function flattenPostseasonGames() {
+  if (!state.postseason) return [];
+  const full = getPostseasonFull();
+  const games = [];
+
+  const addSingle = (m) => {
+    if (!m || !m.a || !m.b || !m.boxscore) return; // bye or TBD, nothing played
+    games.push({
+      home: m.homeTeam.name, away: m.awayTeam.name,
+      result: { homeScore: m.homeScore, awayScore: m.awayScore, boxscore: m.boxscore },
+      played: true, conferenceGame: false,
+    });
+  };
+
+  full.conferenceTournaments.forEach((ct) => {
+    ct.rounds.forEach((round) => round.forEach(addSingle));
+  });
+  full.regionals.forEach((m) => {
+    if (!m.games) return;
+    m.games.forEach((g) => {
+      const homeNm = g.aIsHome ? m.a.name : m.b.name;
+      const awayNm = g.aIsHome ? m.b.name : m.a.name;
+      games.push({
+        home: homeNm, away: awayNm,
+        result: { homeScore: g.homeScore, awayScore: g.awayScore, boxscore: g.boxscore },
+        played: true, conferenceGame: false,
+      });
+    });
+  });
+  const ws = full.worldSeries;
+  ws.winnersBracket.forEach((round) => round.forEach(addSingle));
+  ws.losersBracket.forEach((round) => round.forEach(addSingle));
+  addSingle(ws.grandFinal.game1);
+  addSingle(ws.grandFinal.game2);
+
+  return games;
+}
+
+// state.games (regular season) plus every postseason game played so far, in
+// the same shape -- the one list to use anywhere a team's full-season
+// record or stats should include the postseason (standings, leaderboards,
+// a team's own season stats). Rankings/Coaches Poll intentionally do NOT
+// use this -- those represent the selection-time picture, same as in
+// real life a team's postseason run doesn't rewrite its RPI.
+function allCountedGames() {
+  return state.postseason ? [...state.games, ...flattenPostseasonGames()] : state.games;
+}
+
 async function simPostseason() {
   if (!state.regularSeasonComplete) return;
   try {
@@ -413,15 +475,15 @@ function outsToIp(outs) {
 function computeSeasonStatsForTeam(teamName) {
   const battingTotals = {};
   const pitchingTotals = {};
-  state.games
+  allCountedGames()
     .filter((g) => g.played && (g.home === teamName || g.away === teamName))
     .forEach((g) => {
-      const result = regenerateGameResult(g);
+      const result = g.result.boxscore ? g.result : regenerateGameResult(g);
       const side = g.home === teamName ? 'home' : 'away';
       result.boxscore[side].batting.forEach((b) => {
         if (!battingTotals[b.playerId]) {
           battingTotals[b.playerId] = {
-            name: b.name, number: b.number, class: b.class, position: b.position, battingOrder: b.battingOrder, twoWay: b.twoWay,
+            name: b.name, number: b.number, class: b.class, position: b.position, twoWay: b.twoWay,
             ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, doubles: 0, triples: 0, hr: 0,
           };
         }
@@ -441,7 +503,7 @@ function computeSeasonStatsForTeam(teamName) {
       });
     });
 
-  const batting = Object.values(battingTotals).sort((a, b) => a.battingOrder - b.battingOrder);
+  const batting = Object.values(battingTotals).sort((a, b) => b.ab - a.ab);
   const pitching = Object.values(pitchingTotals).sort((a, b) => b.outs - a.outs);
   return { batting, pitching };
 }
@@ -484,15 +546,15 @@ function computeLeagueStats() {
   const teamTotals = {};
   TEAMS.forEach((t) => {
     teamTotals[t.name] = {
-      name: t.name, ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0,
+      name: t.name, conference: t.conference, ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0,
       outs: 0, pH: 0, er: 0, pBB: 0, pK: 0, pR: 0, wins: 0, losses: 0,
     };
   });
   const playerBatting = {};
   const playerPitching = {};
 
-  state.games.filter((g) => g.played).forEach((g) => {
-    const result = regenerateGameResult(g);
+  allCountedGames().filter((g) => g.played).forEach((g) => {
+    const result = g.result.boxscore ? g.result : regenerateGameResult(g);
     [['away', g.away], ['home', g.home]].forEach(([side, teamName]) => {
       const tt = teamTotals[teamName];
       result.boxscore[side].batting.forEach((b) => {
@@ -500,7 +562,7 @@ function computeLeagueStats() {
         tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
         if (!playerBatting[b.playerId]) {
           playerBatting[b.playerId] = {
-            name: b.name, number: b.number, team: teamName, class: b.class, position: b.position, twoWay: b.twoWay,
+            name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, position: b.position, twoWay: b.twoWay,
             ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0,
           };
         }
@@ -512,7 +574,7 @@ function computeLeagueStats() {
         tt.outs += p.outs; tt.pH += p.h; tt.er += p.er; tt.pBB += p.bb; tt.pK += p.k; tt.pR += p.r;
         if (!playerPitching[p.playerId]) {
           playerPitching[p.playerId] = {
-            name: p.name, number: p.number, team: teamName, class: p.class, role: p.role, twoWay: p.twoWay,
+            name: p.name, number: p.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: p.class, role: p.role, twoWay: p.twoWay,
             outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0,
           };
         }
@@ -581,7 +643,21 @@ function renderLeaders() {
     return;
   }
 
-  const { teamTotals, playerBatting, playerPitching } = computeLeagueStats();
+  const filterSelect = document.getElementById('leaderConfFilter');
+  if (filterSelect.options.length <= 1) {
+    [...CONFERENCES ? Object.keys(CONFERENCES) : []].sort().forEach((conf) => {
+      const opt = document.createElement('option');
+      opt.value = conf;
+      opt.textContent = conf;
+      filterSelect.appendChild(opt);
+    });
+  }
+  const confFilter = filterSelect.value || 'all';
+
+  const { teamTotals: allTeamTotals, playerBatting: allPlayerBatting, playerPitching: allPlayerPitching } = computeLeagueStats();
+  const teamTotals = confFilter === 'all' ? allTeamTotals : allTeamTotals.filter((t) => t.conference === confFilter);
+  const playerBatting = confFilter === 'all' ? allPlayerBatting : allPlayerBatting.filter((p) => p.conference === confFilter);
+  const playerPitching = confFilter === 'all' ? allPlayerPitching : allPlayerPitching.filter((p) => p.conference === confFilter);
 
   const teamSection = document.createElement('div');
   teamSection.className = 'bracket-section';
@@ -607,7 +683,7 @@ function renderLeaders() {
   playerSection.className = 'bracket-section';
   playerSection.innerHTML = `
     <h3>Player Leaders</h3>
-    <p class="view-note">Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.</p>
+    <p class="view-note">Includes postseason games played. Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.</p>
     <div class="leaderboard-grid">
       ${playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, ''))}
       ${playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr)}
@@ -744,6 +820,8 @@ function renderStandings() {
       card.className = 'standings-card';
       const h3 = document.createElement('h3');
       h3.textContent = conf;
+      h3.dataset.conf = conf;
+      h3.classList.add('conf-header-link');
       const confColor = CONFERENCES[conf]?.color;
       if (confColor) card.style.setProperty('--conf-color', confColor);
       card.appendChild(h3);
@@ -783,7 +861,7 @@ function renderRankings() {
     li.className = 'rank-row';
     li.innerHTML = `
       <span class="rank-num">${r.rank}</span>
-      <span class="rank-team">${teamLink(r.name)}<span class="rank-conf">${r.conference}</span></span>
+      <span class="rank-team">${teamLink(r.name)}<span class="rank-conf">${conferenceLink(r.conference)}</span></span>
       <span class="rank-record">${r.record}</span>
       <span class="rank-rpi">${r.rpi.toFixed(3)}</span>
     `;
@@ -797,7 +875,7 @@ function renderRankings() {
     li.className = 'rank-row';
     li.innerHTML = `
       <span class="rank-num">${r.rank}</span>
-      <span class="rank-team">${teamLink(r.name)}<span class="rank-conf">${r.conference}</span></span>
+      <span class="rank-team">${teamLink(r.name)}<span class="rank-conf">${conferenceLink(r.conference)}</span></span>
       <span class="rank-record">${r.record}</span>
       <span class="rank-rpi"></span>
     `;
@@ -982,7 +1060,7 @@ function renderTeams() {
       ${teamBadge(t.name, 40)}
       <div class="team-card-body">
         <h4>${teamLink(t.name, { noBadge: true })}</h4>
-        <p>${t.conference} · ${t.coach}</p>
+        <p>${conferenceLink(t.conference)} · ${t.coach}</p>
         <div class="stat-line">Historically: <strong>${tiers.battingTier || '—'}</strong> hitting, <strong>${tiers.pitchingTier || '—'}</strong> pitching</div>
       </div>
     `;
@@ -1013,11 +1091,63 @@ function teamLink(name, opts = {}) {
   return `<span class="team-link" data-team="${name}">${badge}<span class="team-link-name">${name}</span></span>`;
 }
 
+function conferenceLink(confName) {
+  const color = CONFERENCES[confName]?.color || 'var(--field-green)';
+  return `<span class="conf-link" data-conf="${confName}" style="--conf-link-color:${color}">${confName}</span>`;
+}
+
+function openConferenceModal(confName) {
+  const confTeams = TEAMS.filter((t) => t.conference === confName);
+  if (confTeams.length === 0) return;
+  const color = CONFERENCES[confName]?.color || '#0F3324';
+
+  const standings = computeStandings(TEAMS, state.games);
+  const confStandings = (standingsByConference(standings)[confName] || []);
+
+  const standingsRows = confStandings.map((r) => {
+    const rd = r.runDiff > 0 ? `+${r.runDiff}` : `${r.runDiff}`;
+    return `<tr><td>${teamLink(r.name)}</td><td>${r.confWins}-${r.confLosses}</td><td>${r.wins}-${r.losses}</td><td>${rd}</td></tr>`;
+  }).join('');
+
+  let champLine = '';
+  if (state.postseason) {
+    const ct = state.postseason.conferenceTournaments.find((c) => c.conference === confName);
+    if (ct) champLine = `<p class="tp-sub tp-tiers">Tournament champion: ${teamLink(ct.champion.name)}</p>`;
+  }
+
+  const teamChips = confTeams
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((t) => `<div class="conf-team-chip">${teamLink(t.name)}</div>`).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <div class="tp-header">
+      <div class="conf-badge" style="background:${color}">${confName}</div>
+      <div>
+        <h2>${confName}</h2>
+        <p class="tp-sub">${confTeams.length} teams</p>
+        ${champLine}
+      </div>
+    </div>
+
+    <div class="tp-schedule-title">Standings</div>
+    <table class="standings-table tp-mini-table">
+      <thead><tr><th>Team</th><th>Conf</th><th>Overall</th><th>RD</th></tr></thead>
+      <tbody>${standingsRows}</tbody>
+    </table>
+
+    <div class="tp-schedule-title">Teams</div>
+    <div class="conf-team-grid">${teamChips}</div>
+  `;
+
+  document.getElementById('teamModalOverlay').classList.add('open');
+}
+
 function openTeamModal(name) {
   const team = TEAMS_BY_NAME[name];
   if (!team) return;
 
-  const standings = computeStandings(TEAMS, state.games);
+  const standings = computeStandings(TEAMS, allCountedGames());
   const row = standings.find((r) => r.name === name) || {
     wins: 0, losses: 0, confWins: 0, confLosses: 0, runDiff: 0,
   };
@@ -1056,21 +1186,30 @@ function openTeamModal(name) {
   const teamTotals = teamTotalsFromSeasonStats(seasonStats);
   const roster = state.rosters[name];
 
-  const battingRows = seasonStats.batting.map((b) => `
+  const battingRows = seasonStats.batting.map((b) => {
+    const avg = b.ab > 0 ? b.h / b.ab : 0;
+    const obp = (b.ab + b.bb) > 0 ? (b.h + b.bb) / (b.ab + b.bb) : 0;
+    const totalBases = b.h + b.doubles + 2 * b.triples + 3 * b.hr;
+    const slg = b.ab > 0 ? totalBases / b.ab : 0;
+    const fmt = (x) => x.toFixed(3).replace(/^0/, '');
+    return `
     <tr>
-      <td>#${b.number}</td><td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
-      <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td>
-      <td>${b.hr}</td><td>${b.ab > 0 ? (b.h / b.ab).toFixed(3).replace(/^0/, '') : '.000'}</td>
-    </tr>`).join('');
+      <td>#${b.number}</td><td>${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+      <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
+      <td>${fmt(avg)}</td><td>${fmt(obp)}</td><td>${fmt(slg)}</td><td>${fmt(obp + slg)}</td>
+    </tr>`;
+  }).join('');
 
   const pitchingRows = seasonStats.pitching.map((p) => {
     const ip = outsToIp(p.outs);
     const era = p.outs > 0 ? ((p.er * 21) / p.outs).toFixed(2) : '0.00';
     const whip = p.outs > 0 ? ((p.bb + p.h) / (p.outs / 3)).toFixed(2) : '0.00';
+    const kPer7 = p.outs > 0 ? ((p.k * 21) / p.outs).toFixed(1) : '0.0';
+    const oba = (p.outs + p.h) > 0 ? (p.h / (p.outs + p.h)).toFixed(3).replace(/^0/, '') : '.000';
     return `
     <tr>
       <td>#${p.number}</td><td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
-      <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td>
+      <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td>
     </tr>`;
   }).join('');
 
@@ -1101,7 +1240,7 @@ function openTeamModal(name) {
       </div>
       <div>
         <h2>${team.name}</h2>
-        <p class="tp-sub">${team.conference} · Head Coach ${team.coach}</p>
+        <p class="tp-sub">${conferenceLink(team.conference)} · Head Coach ${team.coach}</p>
         <p class="tp-sub tp-tiers">Historically: ${PROGRAM_TIERS[team.name]?.battingTier || '—'} hitting · ${PROGRAM_TIERS[team.name]?.pitchingTier || '—'} pitching</p>
         <p class="tp-logo-actions">
           <button class="link-btn" data-upload-team="${team.name}">Upload logo</button>
@@ -1129,14 +1268,14 @@ function openTeamModal(name) {
     </div>
 
     ${games.some((g) => g.played) ? `
-    <div class="tp-schedule-title">Season Stats</div>
-    <div class="tp-roster-tables">
+    <div class="tp-schedule-title">Season Stats <span class="view-note">includes postseason games played</span></div>
+    <div class="tp-stacked-tables">
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th></tr></thead>
+        <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th></tr></thead>
         <tbody>${battingRows}</tbody>
       </table>
       <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th></tr></thead>
+        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th><th>K/7</th><th>OBA</th></tr></thead>
         <tbody>${pitchingRows}</tbody>
       </table>
     </div>
@@ -1288,6 +1427,8 @@ function wireTeamModal() {
   document.addEventListener('click', (e) => {
     const link = e.target.closest('.team-link');
     if (link) { openTeamModal(link.dataset.team); return; }
+    const confLink = e.target.closest('[data-conf]');
+    if (confLink) { openConferenceModal(confLink.dataset.conf); return; }
     const boxLink = e.target.closest('[data-boxscore-game]');
     if (boxLink) { openBoxScoreModal(boxLink.dataset.boxscoreGame); return; }
     const psLink = e.target.closest('[data-ps-path]');
@@ -1317,6 +1458,7 @@ function wireControls() {
   document.getElementById('btnSimWeek').addEventListener('click', simWeek);
   document.getElementById('btnSimToEnd').addEventListener('click', simToEnd);
   document.getElementById('btnSimPostseason').addEventListener('click', simPostseason);
+  document.getElementById('leaderConfFilter').addEventListener('change', renderLeaders);
   document.getElementById('btnReset').addEventListener('click', () => {
     if (confirm('Start a brand new season? This clears all current results.')) newSeason();
   });

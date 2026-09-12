@@ -5,7 +5,7 @@
 // tracks a full box score (batting + pitching lines) plus fielding errors,
 // pitching changes, and W/L/SV decisions.
 
-import { pickStarterForGame, buildGameRoster } from './roster.js';
+import { pickStarterForGame, buildGameRoster, orderBattingLineup } from './roster.js';
 
 function clamp(x, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
@@ -135,39 +135,47 @@ export function makeRng(seed) {
 }
 
 const RELIEF_RUN_THRESHOLD = 6; // runs allowed (in the current appearance) before the bullpen gets the call
-const LINEUP_SUB_CHANCE = 0.16; // odds a given lineup slot goes to a bench player for this game
+const LINEUP_SUB_CHANCE = 0.16; // odds a given starting spot goes to a bench player for this game
+const MAX_LINEUP_JITTER = 26; // early season: the lineup card is still very much in flux
+const MIN_LINEUP_JITTER = 6; // late season: the coach has settled on a preferred order
 
-// Builds the actual 9 players used for this specific game. Each slot in the
-// primary lineup has a chance to be given to a bench player instead, so a
-// team's bench gets real, semi-regular usage over a season rather than never
-// playing. This runs on the same seeded `rng` as everything else in the
-// game, so re-simulating a game (see app.js's regenerateGameResult) always
-// reproduces the exact same lineup.
-function selectGameLineup(gameRoster, rng) {
+// Builds today's starting 9 AND today's batting order fresh, every game.
+// Each of the 9 primary spots has a chance to go to a bench player instead
+// (so the bench gets real, semi-regular usage over a season), and whoever's
+// actually playing gets re-sorted into a batting order using the same
+// ratings-driven logic as roster generation -- but re-rolled today, with
+// jitter that shrinks as `seasonProgress` (0 = week 1, 1 = late season)
+// climbs, so lineups are shuffled and experimental early on and settle into
+// a consistent order by the stretch run. Defensive positions travel with
+// the player, not the batting slot -- a substitute takes over whichever
+// position the starter they're replacing would have played. This all runs
+// on the same seeded `rng` as everything else in the game, so re-simulating
+// a game (see app.js's regenerateGameResult) always reproduces the exact
+// same lineup and order.
+function selectGameLineup(gameRoster, rng, seasonProgress) {
   const bench = gameRoster.bench || [];
-  if (bench.length === 0) return gameRoster.lineup;
-  // Each lineup slot independently rolls a chance to be given to a bench
-  // player, but two different slots must never land on the SAME bench
-  // player in the same game -- the batting box is keyed by player id, so a
-  // collision would silently collapse two lineup slots into one (an
-  // 8-player lineup). Track who's already been used this game.
   const usedBenchIds = new Set();
-  return gameRoster.lineup.map((starter) => {
-    if (rng() < LINEUP_SUB_CHANCE) {
+  const todaysNine = gameRoster.lineup.map((starter) => {
+    if (bench.length > 0 && rng() < LINEUP_SUB_CHANCE) {
       const available = bench.filter((p) => !usedBenchIds.has(p.id));
       if (available.length === 0) return starter; // bench exhausted this game
       const sub = available[Math.floor(rng() * available.length)];
       usedBenchIds.add(sub.id);
-      return { ...sub, battingOrder: starter.battingOrder, position: starter.position, starterId: starter.id };
+      return { ...sub, position: starter.position, starterId: starter.id };
     }
     return starter;
   });
+
+  const progress = clamp(seasonProgress ?? 1, 0, 1);
+  const jitter = MAX_LINEUP_JITTER - (MAX_LINEUP_JITTER - MIN_LINEUP_JITTER) * progress;
+  const ordered = orderBattingLineup(todaysNine, rng, jitter);
+  return ordered.map((p, i) => ({ ...p, battingOrder: i + 1 }));
 }
 
-function makeTeamGameState(gameRoster, rng) {
+function makeTeamGameState(gameRoster, rng, seasonProgress) {
   return {
     name: gameRoster.name,
-    lineup: selectGameLineup(gameRoster, rng),
+    lineup: selectGameLineup(gameRoster, rng, seasonProgress),
     battingIndex: 0,
     fieldingPct: gameRoster.fieldingPct,
     errors: 0,
@@ -325,11 +333,11 @@ function finalizePitchingBox(appearances) {
 const MERCY_INNING = 5; // earliest inning the mercy rule can end the game
 const MERCY_MARGIN = 8; // run lead required
 
-export function simulateGame(awayGameRoster, homeGameRoster, league, seed) {
+export function simulateGame(awayGameRoster, homeGameRoster, league, seed, seasonProgress = 1) {
   const rng = typeof seed === 'number' ? makeRng(seed) : Math.random;
 
-  const awayState = makeTeamGameState(awayGameRoster, rng);
-  const homeState = makeTeamGameState(homeGameRoster, rng);
+  const awayState = makeTeamGameState(awayGameRoster, rng, seasonProgress);
+  const homeState = makeTeamGameState(homeGameRoster, rng, seasonProgress);
   startAppearance(awayState, awayGameRoster.startingPitcher);
   startAppearance(homeState, homeGameRoster.startingPitcher);
 
