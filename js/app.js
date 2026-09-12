@@ -445,6 +445,38 @@ function allCountedGames() {
   return state.postseason ? [...state.games, ...flattenPostseasonGames()] : state.games;
 }
 
+function findPlayerInstances(teamName, playerId) {
+  const roster = state.rosters[teamName];
+  if (!roster) return [];
+  return [...roster.lineup, ...roster.bench, ...roster.pitchers].filter((p) => p.id === playerId);
+}
+
+// Every game a specific player appeared in (batting and/or pitching), across
+// the regular season and postseason, in chronological-ish order (regular
+// season by week, postseason appended in tournament order).
+function computePlayerGameLog(teamName, playerId) {
+  const regular = state.games
+    .filter((g) => g.played && (g.home === teamName || g.away === teamName))
+    .sort((a, b) => a.id - b.id)
+    .map((g) => ({ ...g, isPostseason: false }));
+  const postseason = state.postseason
+    ? flattenPostseasonGames().filter((g) => g.home === teamName || g.away === teamName).map((g) => ({ ...g, isPostseason: true }))
+    : [];
+
+  const battingLog = [];
+  const pitchingLog = [];
+  [...regular, ...postseason].forEach((g) => {
+    const result = g.result.boxscore ? g.result : regenerateGameResult(g);
+    const side = g.home === teamName ? 'home' : 'away';
+    const opponent = side === 'home' ? g.away : g.home;
+    const b = result.boxscore[side].batting.find((x) => x.playerId === playerId);
+    if (b && (b.ab > 0 || b.bb > 0)) battingLog.push({ opponent, week: g.week, isPostseason: g.isPostseason, ...b });
+    const p = result.boxscore[side].pitching.find((x) => x.playerId === playerId);
+    if (p) pitchingLog.push({ opponent, week: g.week, isPostseason: g.isPostseason, ...p });
+  });
+  return { battingLog, pitchingLog };
+}
+
 async function simPostseason() {
   if (!state.regularSeasonComplete) return;
   try {
@@ -483,7 +515,7 @@ function computeSeasonStatsForTeam(teamName) {
       result.boxscore[side].batting.forEach((b) => {
         if (!battingTotals[b.playerId]) {
           battingTotals[b.playerId] = {
-            name: b.name, number: b.number, class: b.class, position: b.position, twoWay: b.twoWay,
+            playerId: b.playerId, name: b.name, number: b.number, class: b.class, position: b.position, twoWay: b.twoWay,
             ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, doubles: 0, triples: 0, hr: 0,
           };
         }
@@ -493,7 +525,7 @@ function computeSeasonStatsForTeam(teamName) {
       });
       result.boxscore[side].pitching.forEach((p) => {
         if (!pitchingTotals[p.playerId]) {
-          pitchingTotals[p.playerId] = { name: p.name, number: p.number, class: p.class, role: p.role, twoWay: p.twoWay, outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0 };
+          pitchingTotals[p.playerId] = { playerId: p.playerId, name: p.name, number: p.number, class: p.class, role: p.role, twoWay: p.twoWay, outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0 };
         }
         const t = pitchingTotals[p.playerId];
         t.outs += p.outs; t.h += p.h; t.r += p.r; t.er += p.er; t.bb += p.bb; t.k += p.k;
@@ -562,7 +594,7 @@ function computeLeagueStats() {
         tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
         if (!playerBatting[b.playerId]) {
           playerBatting[b.playerId] = {
-            name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, position: b.position, twoWay: b.twoWay,
+            playerId: b.playerId, name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, position: b.position, twoWay: b.twoWay,
             ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0,
           };
         }
@@ -574,7 +606,7 @@ function computeLeagueStats() {
         tt.outs += p.outs; tt.pH += p.h; tt.er += p.er; tt.pBB += p.bb; tt.pK += p.k; tt.pR += p.r;
         if (!playerPitching[p.playerId]) {
           playerPitching[p.playerId] = {
-            name: p.name, number: p.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: p.class, role: p.role, twoWay: p.twoWay,
+            playerId: p.playerId, name: p.name, number: p.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: p.class, role: p.role, twoWay: p.twoWay,
             outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0,
           };
         }
@@ -620,7 +652,7 @@ function playerLeaderCard(title, rows, valueLabel, valueFn, count = 10) {
   const bodyRows = rows.slice(0, count).map((r, i) => `
     <tr>
       <td class="lb-rank">${i + 1}</td>
-      <td>#${r.number} ${r.name}${r.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td>
+      <td>#${r.number} ${playerLink(r.team, r.playerId, r.name)}${r.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td>
       <td><span class="team-link" data-team="${r.team}">${teamBadge(r.team, 18)}</span></td>
       <td>${valueFn(r)}</td>
     </tr>`).join('');
@@ -1091,6 +1123,114 @@ function teamLink(name, opts = {}) {
   return `<span class="team-link" data-team="${name}">${badge}<span class="team-link-name">${name}</span></span>`;
 }
 
+function playerLink(teamName, playerId, displayName) {
+  return `<span class="player-link" data-player-team="${teamName}" data-player-id="${playerId}">${displayName}</span>`;
+}
+
+function openPlayerModal(teamName, playerId) {
+  const instances = findPlayerInstances(teamName, playerId);
+  if (instances.length === 0) return;
+  const team = TEAMS_BY_NAME[teamName];
+  const hitterInfo = instances.find((p) => p.ratings && p.ratings.contact !== undefined);
+  const pitcherInfo = instances.find((p) => p.ratings && p.ratings.stuff !== undefined);
+  const primary = hitterInfo || pitcherInfo;
+  const isTwoWay = !!(hitterInfo && pitcherInfo);
+
+  const { battingLog, pitchingLog } = computePlayerGameLog(teamName, playerId);
+
+  const roleLabel = isTwoWay
+    ? `Two-Way — ${hitterInfo.position} / ${pitcherInfo.role}`
+    : pitcherInfo ? pitcherInfo.role : hitterInfo.position;
+
+  // Season totals, rolled up from the game log.
+  const bt = battingLog.reduce((acc, b) => {
+    acc.ab += b.ab; acc.h += b.h; acc.bb += b.bb; acc.r += b.r; acc.rbi += b.rbi;
+    acc.hr += b.hr; acc.doubles += b.doubles; acc.triples += b.triples; acc.k += b.k;
+    return acc;
+  }, { ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0 });
+  const pt = pitchingLog.reduce((acc, p) => {
+    acc.outs += p.outs; acc.h += p.h; acc.er += p.er; acc.bb += p.bb; acc.k += p.k;
+    if (p.decision === 'W') acc.w += 1;
+    if (p.decision === 'L') acc.l += 1;
+    if (p.decision === 'SV') acc.sv += 1;
+    return acc;
+  }, { outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0 });
+
+  const fmt3 = (x) => x.toFixed(3).replace(/^0/, '');
+  const battingSummary = battingLog.length > 0 ? (() => {
+    const avg = bt.ab > 0 ? bt.h / bt.ab : 0;
+    const obp = (bt.ab + bt.bb) > 0 ? (bt.h + bt.bb) / (bt.ab + bt.bb) : 0;
+    const tb = bt.h + bt.doubles + 2 * bt.triples + 3 * bt.hr;
+    const slg = bt.ab > 0 ? tb / bt.ab : 0;
+    return `AVG ${fmt3(avg)} · OBP ${fmt3(obp)} · SLG ${fmt3(slg)} · OPS ${fmt3(obp + slg)} · ${bt.hr} HR · ${bt.rbi} RBI`;
+  })() : '';
+  const pitchingSummary = pitchingLog.length > 0 ? (() => {
+    const era = pt.outs > 0 ? ((pt.er * 21) / pt.outs).toFixed(2) : '0.00';
+    const whip = pt.outs > 0 ? ((pt.bb + pt.h) / (pt.outs / 3)).toFixed(2) : '0.00';
+    const kPer7 = pt.outs > 0 ? ((pt.k * 21) / pt.outs).toFixed(1) : '0.0';
+    return `${pt.w}-${pt.l}${pt.sv ? `, ${pt.sv}sv` : ''} · ERA ${era} · WHIP ${whip} · K/7 ${kPer7} · ${outsToIp(pt.outs)} IP`;
+  })() : '';
+
+  const gameTag = (g) => (g.isPostseason ? 'Postseason' : `wk ${g.week}`);
+  const battingLogRows = battingLog.map((b) => `
+    <tr>
+      <td>${gameTag(b)}</td><td>vs ${teamLink(b.opponent)}</td>
+      <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
+    </tr>`).join('');
+  const pitchingLogRows = pitchingLog.map((p) => `
+    <tr>
+      <td>${gameTag(p)}</td><td>vs ${teamLink(p.opponent)}</td>
+      <td>${p.ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${p.decision || ''}</td>
+    </tr>`).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <div class="tp-header">
+      ${teamBadge(teamName, 56, 'team-badge-lg')}
+      <div>
+        <h2>#${primary.number} ${primary.name}${isTwoWay ? ' <span class="two-way-tag">TW</span>' : ''}</h2>
+        <p class="tp-sub">${primary.class} · ${roleLabel} · ${teamLink(teamName)}</p>
+      </div>
+    </div>
+
+    <div class="tp-schedule-title">Ratings <span class="view-note">20-80 scale, 50 = league average</span></div>
+    <div class="tp-roster-tables">
+      ${hitterInfo ? `
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>
+        <tbody><tr><td>${hitterInfo.ratings.contact}</td><td>${hitterInfo.ratings.power}</td><td>${hitterInfo.ratings.eye}</td></tr></tbody>
+      </table>` : ''}
+      ${pitcherInfo ? `
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th>Stuff</th><th>Control</th><th>Movement</th></tr></thead>
+        <tbody><tr><td>${pitcherInfo.ratings.stuff}</td><td>${pitcherInfo.ratings.control}</td><td>${pitcherInfo.ratings.movement}</td></tr></tbody>
+      </table>` : ''}
+    </div>
+
+    ${battingLog.length > 0 || pitchingLog.length > 0 ? `<p class="tp-team-totals">${[battingSummary, pitchingSummary].filter(Boolean).join(' &nbsp;|&nbsp; ')}</p>` : '<p class="view-note">No games played yet.</p>'}
+
+    <div class="tp-stacked-tables">
+      ${battingLog.length > 0 ? `
+      <div>
+        <div class="tp-schedule-title">Batting Log (${battingLog.length})</div>
+        <table class="standings-table tp-mini-table">
+          <thead><tr><th></th><th>Opp</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th></tr></thead>
+          <tbody>${battingLogRows}</tbody>
+        </table>
+      </div>` : ''}
+      ${pitchingLog.length > 0 ? `
+      <div>
+        <div class="tp-schedule-title">Pitching Log (${pitchingLog.length})</div>
+        <table class="standings-table tp-mini-table">
+          <thead><tr><th></th><th>Opp</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th></th></tr></thead>
+          <tbody>${pitchingLogRows}</tbody>
+        </table>
+      </div>` : ''}
+    </div>
+  `;
+
+  document.getElementById('teamModalOverlay').classList.add('open');
+}
+
 function conferenceLink(confName) {
   const color = CONFERENCES[confName]?.color || 'var(--field-green)';
   return `<span class="conf-link" data-conf="${confName}" style="--conf-link-color:${color}">${confName}</span>`;
@@ -1194,7 +1334,7 @@ function openTeamModal(name) {
     const fmt = (x) => x.toFixed(3).replace(/^0/, '');
     return `
     <tr>
-      <td>#${b.number}</td><td>${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+      <td>#${b.number}</td><td>${playerLink(name, b.playerId, b.name)}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
       <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
       <td>${fmt(avg)}</td><td>${fmt(obp)}</td><td>${fmt(slg)}</td><td>${fmt(obp + slg)}</td>
     </tr>`;
@@ -1208,7 +1348,7 @@ function openTeamModal(name) {
     const oba = (p.outs + p.h) > 0 ? (p.h / (p.outs + p.h)).toFixed(3).replace(/^0/, '') : '.000';
     return `
     <tr>
-      <td>#${p.number}</td><td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
+      <td>#${p.number}</td><td>${p.role} ${playerLink(name, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
       <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td>
     </tr>`;
   }).join('');
@@ -1217,12 +1357,12 @@ function openTeamModal(name) {
   // yet) -- lineup + bench hitters, then the full pitching staff.
   const rosterHitterRows = [...roster.lineup, ...roster.bench].map((p) => `
     <tr>
-      <td>#${p.number}</td><td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
+      <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
       <td>${p.ratings.contact}</td><td>${p.ratings.power}</td><td>${p.ratings.eye}</td>
     </tr>`).join('');
   const rosterPitcherRows = roster.pitchers.map((p) => `
     <tr>
-      <td>#${p.number}</td><td>${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
+      <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
       <td>${p.ratings.stuff}</td><td>${p.ratings.control}</td><td>${p.ratings.movement}</td>
     </tr>`).join('');
 
@@ -1294,7 +1434,7 @@ function boxScoreSectionHTML(result, awayName, homeName) {
   function battingTable(side, teamName) {
     const rows = result.boxscore[side].batting.map((b) => `
       <tr>
-        <td>#${b.number}</td><td>${b.battingOrder}. ${b.name}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+        <td>#${b.number}</td><td>${b.battingOrder}. ${playerLink(teamName, b.playerId, b.name)}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
         <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td>
       </tr>`).join('');
     return `
@@ -1307,10 +1447,10 @@ function boxScoreSectionHTML(result, awayName, homeName) {
       </div>`;
   }
 
-  function pitchingTable(side) {
+  function pitchingTable(side, teamName) {
     const rows = result.boxscore[side].pitching.map((p) => `
       <tr>
-        <td>#${p.number}</td><td>${p.role} ${p.name}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.ip}</td><td>${p.h}</td><td>${p.r}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td>
+        <td>#${p.number}</td><td>${p.role} ${playerLink(teamName, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.ip}</td><td>${p.h}</td><td>${p.r}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td>
         <td>${p.decision}</td>
       </tr>`).join('');
     return `
@@ -1343,8 +1483,8 @@ function boxScoreSectionHTML(result, awayName, homeName) {
 
     <div class="tp-schedule-title">Pitching</div>
     <div class="tp-roster-tables">
-      ${pitchingTable('away')}
-      ${pitchingTable('home')}
+      ${pitchingTable('away', awayName)}
+      ${pitchingTable('home', homeName)}
     </div>
   `;
 }
@@ -1429,6 +1569,8 @@ function wireTeamModal() {
     if (link) { openTeamModal(link.dataset.team); return; }
     const confLink = e.target.closest('[data-conf]');
     if (confLink) { openConferenceModal(confLink.dataset.conf); return; }
+    const playerEl = e.target.closest('[data-player-id]');
+    if (playerEl) { openPlayerModal(playerEl.dataset.playerTeam, playerEl.dataset.playerId); return; }
     const boxLink = e.target.closest('[data-boxscore-game]');
     if (boxLink) { openBoxScoreModal(boxLink.dataset.boxscoreGame); return; }
     const psLink = e.target.closest('[data-ps-path]');

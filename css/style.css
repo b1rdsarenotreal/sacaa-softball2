@@ -342,6 +342,12 @@ main {
 
 .conf-link:hover { text-decoration: underline; }
 
+.player-link {
+  cursor: pointer;
+}
+
+.player-link:hover { text-decoration: underline; text-decoration-color: var(--clay); }
+
 .conf-header-link { cursor: pointer; transition: filter 0.12s var(--ease); }
 .conf-header-link:hover { filter: brightness(1.15); }
 
