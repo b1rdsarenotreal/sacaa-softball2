@@ -129,6 +129,15 @@ function mulberry32(seed) {
 
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 
+function shuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 // Roughly bell-shaped noise centered on 0, spread about ±1.
 function noise(rng) { return ((rng() + rng() + rng()) / 3 - 0.5) * 2; }
 
@@ -362,6 +371,10 @@ function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames
   const rest = restScored.sort((a, b) => b.score - a.score).map((x) => x.p);
 
   const lineupOrder = [...leadoff, ...heart, ...rest];
+  // Defensive position is independent of batting order -- a team's leadoff
+  // hitter is just as likely to play center field as to catch. Shuffle the
+  // 9 positions separately rather than assigning them by batting-order slot.
+  const shuffledPositions = shuffle(POSITIONS, rng);
   const lineup = lineupOrder.map((p, i) => ({
     id: p.id,
     name: p.name,
@@ -369,7 +382,7 @@ function buildRosterPlayers(team, talents, hitterCount, pitchers, rng, usedNames
     twoWay: p.twoWay,
     pitcherRole: p.twoWay ? p.pitcherRef.role : null,
     battingOrder: i + 1,
-    position: POSITIONS[i],
+    position: shuffledPositions[i],
     ratings: p.ratings,
   }));
 

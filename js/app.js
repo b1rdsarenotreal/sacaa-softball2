@@ -446,6 +446,181 @@ function computeSeasonStatsForTeam(teamName) {
   return { batting, pitching };
 }
 
+// Rolls a team's per-player season stats (from computeSeasonStatsForTeam) up
+// into team-level rate stats -- actual simulated performance, distinct from
+// the "Historically: Elite/Strong" tags which reflect the source program's
+// real-world reputation rather than this season's results.
+function teamTotalsFromSeasonStats(seasonStats) {
+  const bat = seasonStats.batting.reduce((acc, b) => {
+    acc.ab += b.ab; acc.h += b.h; acc.bb += b.bb; acc.r += b.r; acc.rbi += b.rbi;
+    acc.hr += b.hr; acc.doubles += b.doubles; acc.triples += b.triples;
+    return acc;
+  }, { ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0 });
+  const pitch = seasonStats.pitching.reduce((acc, p) => {
+    acc.outs += p.outs; acc.h += p.h; acc.er += p.er; acc.bb += p.bb; acc.k += p.k; acc.r += p.r;
+    return acc;
+  }, { outs: 0, h: 0, er: 0, bb: 0, k: 0, r: 0 });
+
+  const totalBases = bat.h + bat.doubles + 2 * bat.triples + 3 * bat.hr;
+  return {
+    avg: bat.ab > 0 ? bat.h / bat.ab : 0,
+    obp: (bat.ab + bat.bb) > 0 ? (bat.h + bat.bb) / (bat.ab + bat.bb) : 0,
+    slg: bat.ab > 0 ? totalBases / bat.ab : 0,
+    hr: bat.hr,
+    runs: bat.r,
+    rbi: bat.rbi,
+    era: pitch.outs > 0 ? (pitch.er * 21) / pitch.outs : 0,
+    whip: pitch.outs > 0 ? (pitch.bb + pitch.h) / (pitch.outs / 3) : 0,
+    k: pitch.k,
+    runsAllowed: pitch.r,
+  };
+}
+
+// One pass over every played game in the season, building both team-level
+// totals (all 56 teams) and individual player totals league-wide. This is
+// what powers the Leaders tab. ~60ms for a full season -- cheap enough to
+// just recompute whenever the tab is rendered rather than caching it.
+function computeLeagueStats() {
+  const teamTotals = {};
+  TEAMS.forEach((t) => {
+    teamTotals[t.name] = {
+      name: t.name, ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0,
+      outs: 0, pH: 0, er: 0, pBB: 0, pK: 0, pR: 0, wins: 0, losses: 0,
+    };
+  });
+  const playerBatting = {};
+  const playerPitching = {};
+
+  state.games.filter((g) => g.played).forEach((g) => {
+    const result = regenerateGameResult(g);
+    [['away', g.away], ['home', g.home]].forEach(([side, teamName]) => {
+      const tt = teamTotals[teamName];
+      result.boxscore[side].batting.forEach((b) => {
+        tt.ab += b.ab; tt.h += b.h; tt.bb += b.bb; tt.r += b.r; tt.rbi += b.rbi;
+        tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
+        if (!playerBatting[b.playerId]) {
+          playerBatting[b.playerId] = {
+            name: b.name, number: b.number, team: teamName, class: b.class, position: b.position, twoWay: b.twoWay,
+            ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0,
+          };
+        }
+        const pb = playerBatting[b.playerId];
+        pb.ab += b.ab; pb.h += b.h; pb.bb += b.bb; pb.r += b.r; pb.rbi += b.rbi;
+        pb.hr += b.hr; pb.doubles += b.doubles; pb.triples += b.triples; pb.k += b.k;
+      });
+      result.boxscore[side].pitching.forEach((p) => {
+        tt.outs += p.outs; tt.pH += p.h; tt.er += p.er; tt.pBB += p.bb; tt.pK += p.k; tt.pR += p.r;
+        if (!playerPitching[p.playerId]) {
+          playerPitching[p.playerId] = {
+            name: p.name, number: p.number, team: teamName, class: p.class, role: p.role, twoWay: p.twoWay,
+            outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0,
+          };
+        }
+        const pp = playerPitching[p.playerId];
+        pp.outs += p.outs; pp.h += p.h; pp.er += p.er; pp.bb += p.bb; pp.k += p.k;
+        if (p.decision === 'W') pp.w += 1;
+        if (p.decision === 'L') pp.l += 1;
+        if (p.decision === 'SV') pp.sv += 1;
+      });
+    });
+    const homeWon = g.result.homeScore > g.result.awayScore;
+    if (homeWon) { teamTotals[g.home].wins += 1; teamTotals[g.away].losses += 1; }
+    else { teamTotals[g.away].wins += 1; teamTotals[g.home].losses += 1; }
+  });
+
+  Object.values(teamTotals).forEach((t) => {
+    const totalBases = t.h + t.doubles + 2 * t.triples + 3 * t.hr;
+    t.avg = t.ab > 0 ? t.h / t.ab : 0;
+    t.obp = (t.ab + t.bb) > 0 ? (t.h + t.bb) / (t.ab + t.bb) : 0;
+    t.slg = t.ab > 0 ? totalBases / t.ab : 0;
+    t.era = t.outs > 0 ? (t.er * 21) / t.outs : 0;
+    t.whip = t.outs > 0 ? (t.pBB + t.pH) / (t.outs / 3) : 0;
+  });
+
+  return { teamTotals: Object.values(teamTotals), playerBatting: Object.values(playerBatting), playerPitching: Object.values(playerPitching) };
+}
+
+function teamLeaderCard(title, rows, valueLabel, valueFn, count = 10) {
+  const bodyRows = rows.slice(0, count).map((r, i) => `
+    <tr><td class="lb-rank">${i + 1}</td><td>${teamLink(r.name)}</td><td>${valueFn(r)}</td></tr>
+  `).join('');
+  return `
+    <div class="leaderboard-card">
+      <h4>${title}</h4>
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th></th><th>Team</th><th>${valueLabel}</th></tr></thead>
+        <tbody>${bodyRows || `<tr><td colspan="3" class="view-note">Not enough games played yet</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function playerLeaderCard(title, rows, valueLabel, valueFn, count = 10) {
+  const bodyRows = rows.slice(0, count).map((r, i) => `
+    <tr>
+      <td class="lb-rank">${i + 1}</td>
+      <td>#${r.number} ${r.name}${r.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td>
+      <td><span class="team-link" data-team="${r.team}">${teamBadge(r.team, 18)}</span></td>
+      <td>${valueFn(r)}</td>
+    </tr>`).join('');
+  return `
+    <div class="leaderboard-card">
+      <h4>${title}</h4>
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th></th><th>Player</th><th></th><th>${valueLabel}</th></tr></thead>
+        <tbody>${bodyRows || `<tr><td colspan="4" class="view-note">No qualifiers yet</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderLeaders() {
+  const container = document.getElementById('leadersContent');
+  container.innerHTML = '';
+  const played = state.games.some((g) => g.played);
+  if (!played) {
+    container.innerHTML = '<p class="view-note">Simulate a week to generate league leaders.</p>';
+    return;
+  }
+
+  const { teamTotals, playerBatting, playerPitching } = computeLeagueStats();
+
+  const teamSection = document.createElement('div');
+  teamSection.className = 'bracket-section';
+  teamSection.innerHTML = `
+    <h3>Team Leaders</h3>
+    <div class="leaderboard-grid">
+      ${teamLeaderCard('Batting AVG', [...teamTotals].sort((a, b) => b.avg - a.avg), 'AVG', (t) => t.avg.toFixed(3).replace(/^0/, ''))}
+      ${teamLeaderCard('Slugging (SLG)', [...teamTotals].sort((a, b) => b.slg - a.slg), 'SLG', (t) => t.slg.toFixed(3).replace(/^0/, ''))}
+      ${teamLeaderCard('Home Runs', [...teamTotals].sort((a, b) => b.hr - a.hr), 'HR', (t) => t.hr)}
+      ${teamLeaderCard('ERA', [...teamTotals].sort((a, b) => a.era - b.era), 'ERA', (t) => t.era.toFixed(2))}
+      ${teamLeaderCard('WHIP', [...teamTotals].sort((a, b) => a.whip - b.whip), 'WHIP', (t) => t.whip.toFixed(2))}
+      ${teamLeaderCard('Strikeouts (pitching)', [...teamTotals].sort((a, b) => b.pK - a.pK), 'K', (t) => t.pK)}
+    </div>
+  `;
+  container.appendChild(teamSection);
+
+  const MIN_AB = 40;
+  const MIN_OUTS = 60; // 20 innings
+  const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
+  const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
+
+  const playerSection = document.createElement('div');
+  playerSection.className = 'bracket-section';
+  playerSection.innerHTML = `
+    <h3>Player Leaders</h3>
+    <p class="view-note">Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.</p>
+    <div class="leaderboard-grid">
+      ${playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, ''))}
+      ${playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr)}
+      ${playerLeaderCard('RBI', [...playerBatting].sort((a, b) => b.rbi - a.rbi), 'RBI', (p) => p.rbi)}
+      ${playerLeaderCard('Hits', [...playerBatting].sort((a, b) => b.h - a.h), 'H', (p) => p.h)}
+      ${playerLeaderCard('ERA', [...qualifiedPitchers].sort((a, b) => ((a.er * 21) / a.outs) - ((b.er * 21) / b.outs)), 'ERA', (p) => ((p.er * 21) / p.outs).toFixed(2))}
+      ${playerLeaderCard('Strikeouts (pitching)', [...playerPitching].sort((a, b) => b.k - a.k), 'K', (p) => p.k)}
+      ${playerLeaderCard('Wins', [...playerPitching].sort((a, b) => b.w - a.w), 'W', (p) => p.w)}
+    </div>
+  `;
+  container.appendChild(playerSection);
+}
+
 function setMessage(msg) {
   document.getElementById('simMessage').textContent = msg;
 }
@@ -458,6 +633,7 @@ function renderAll() {
   renderSchedule();
   renderStandings();
   renderRankings();
+  renderLeaders();
   renderPostseason();
   renderTeams();
 }
@@ -877,6 +1053,7 @@ function openTeamModal(name) {
 
   const rd = row.runDiff > 0 ? `+${row.runDiff}` : `${row.runDiff}`;
   const seasonStats = computeSeasonStatsForTeam(name);
+  const teamTotals = teamTotalsFromSeasonStats(seasonStats);
   const roster = state.rosters[name];
 
   const battingRows = seasonStats.batting.map((b) => `
@@ -937,6 +1114,7 @@ function openTeamModal(name) {
       <div class="tp-record-box"><span class="num">${row.confWins}-${row.confLosses}</span><span class="label">conference</span></div>
       <div class="tp-record-box"><span class="num">${rd}</span><span class="label">run diff</span></div>
     </div>
+    ${games.some((g) => g.played) ? `<p class="tp-team-totals">Season: AVG ${teamTotals.avg.toFixed(3).replace(/^0/, '')} · OBP ${teamTotals.obp.toFixed(3).replace(/^0/, '')} · SLG ${teamTotals.slg.toFixed(3).replace(/^0/, '')} &nbsp;|&nbsp; ERA ${teamTotals.era.toFixed(2)} · WHIP ${teamTotals.whip.toFixed(2)}</p>` : ''}
 
     <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
     <div class="tp-roster-tables">

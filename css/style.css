@@ -854,6 +854,44 @@ main {
   margin-bottom: 18px;
 }
 
+.tp-team-totals {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 4px 0 0;
+}
+
+/* ---------- Leaderboards ---------- */
+
+.leaderboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.leaderboard-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.leaderboard-card h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--field-green);
+  margin: 0 0 10px;
+}
+
+.lb-rank {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--clay);
+  width: 20px;
+}
+
 .tp-schedule-title {
   font-family: var(--font-display);
   font-weight: 700;
