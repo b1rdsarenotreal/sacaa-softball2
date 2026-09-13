@@ -100,16 +100,96 @@ export function runConferenceTournament(conferenceStandingRows, teamsByName, ros
   return { conference: conferenceStandingRows[0]?.conference, rounds, champion };
 }
 
-export function selectField(conferenceChampions, rankings, fieldSize = 16) {
-  const autoBidNames = new Set(conferenceChampions.map((c) => c.champion?.name).filter(Boolean));
-  const autoBids = rankings.filter((r) => autoBidNames.has(r.name));
-  const atLargePool = rankings.filter((r) => !autoBidNames.has(r.name));
+// Selects the 16-team national field, then seeds it 1-16.
+//
+// SELECTION (who gets in) stays a two-step process, same as real NCAA
+// selection: each conference tournament champion gets an automatic bid,
+// and the rest of the field is filled by RPI rank. One eligibility rule on
+// top of that: a team with a losing overall record never makes the
+// national tournament, even if it gets hot and wins its conference
+// tournament -- that auto-bid is simply forfeited rather than handed to a
+// sub-.500 team, and a losing record also disqualifies a team from the
+// at-large pool regardless of RPI.
+//
+// SEEDING (the 1-16 order) is a separate step from selection, and is where
+// the extra factors live: RPI is still the dominant input, blended with a
+// quality-win bonus (wins over teams that finished in the final RPI top
+// 10), a small bump for having won your conference tournament, strength of
+// schedule (a team's opponents' win% -- already part of RPI's own formula,
+// but weighted here as its own explicit factor too, same as a real
+// selection committee considers it separately alongside the RPI number),
+// and a head-to-head nudge for teams that beat fellow tournament teams
+// during the regular season.
+export function selectField(conferenceChampions, rankings, games, fieldSize = 16) {
+  const isEligible = (r) => r.wins >= r.losses;
+  const rankingsByName = Object.fromEntries(rankings.map((r) => [r.name, r]));
+
+  const autoBidNames = new Set(
+    conferenceChampions
+      .map((c) => c.champion?.name)
+      .filter(Boolean)
+      .filter((name) => rankingsByName[name] && isEligible(rankingsByName[name]))
+  );
+
+  const eligibleRankings = rankings.filter(isEligible);
+  const autoBids = eligibleRankings.filter((r) => autoBidNames.has(r.name));
+  const atLargePool = eligibleRankings.filter((r) => !autoBidNames.has(r.name)); // already RPI-sorted
   const atLargeCount = Math.max(0, fieldSize - autoBids.length);
   const atLarge = atLargePool.slice(0, atLargeCount);
+  const fieldRows = [...autoBids, ...atLarge];
 
-  const field = [...autoBids, ...atLarge].sort((a, b) => (a.rpi < b.rpi ? 1 : -1));
-  field.forEach((row, i) => { row.seed = i + 1; row.berth = autoBidNames.has(row.name) ? 'Automatic' : 'At-large'; });
-  return field;
+  const top10Names = new Set(rankings.slice(0, 10).map((r) => r.name));
+  const playedGames = games.filter((g) => g.played);
+
+  const top10WinsFor = (name) => {
+    let count = 0;
+    playedGames.forEach((g) => {
+      if (g.home !== name && g.away !== name) return;
+      const opp = g.home === name ? g.away : g.home;
+      if (!top10Names.has(opp)) return;
+      const isHome = g.home === name;
+      const won = isHome ? g.result.homeScore > g.result.awayScore : g.result.awayScore > g.result.homeScore;
+      if (won) count += 1;
+    });
+    return count;
+  };
+
+  const headToHeadFor = (name, fieldNames) => {
+    let w = 0; let l = 0;
+    playedGames.forEach((g) => {
+      if (g.home !== name && g.away !== name) return;
+      const opp = g.home === name ? g.away : g.home;
+      if (opp === name || !fieldNames.has(opp)) return;
+      const isHome = g.home === name;
+      const won = isHome ? g.result.homeScore > g.result.awayScore : g.result.awayScore > g.result.homeScore;
+      if (won) w += 1; else l += 1;
+    });
+    return w - l;
+  };
+
+  const fieldNameSet = new Set(fieldRows.map((r) => r.name));
+  const rpiVals = fieldRows.map((r) => r.rpi);
+  const rpiMin = Math.min(...rpiVals);
+  const rpiRange = (Math.max(...rpiVals) - rpiMin) || 1;
+  const owpVals = fieldRows.map((r) => r.owp);
+  const owpMin = Math.min(...owpVals);
+  const owpRange = (Math.max(...owpVals) - owpMin) || 1;
+
+  fieldRows.forEach((r) => {
+    const rpiPct = (r.rpi - rpiMin) / rpiRange;
+    const sosPct = (r.owp - owpMin) / owpRange; // owp = opponents' win% = strength of schedule
+    const top10Wins = top10WinsFor(r.name);
+    const top10Bonus = Math.min(top10Wins, 5) / 5; // quality wins matter, but cap the benefit
+    const confChampBonus = autoBidNames.has(r.name) ? 1 : 0;
+    const h2h = Math.max(-1, Math.min(1, headToHeadFor(r.name, fieldNameSet)));
+
+    r.seedScore = 0.55 * rpiPct + 0.15 * top10Bonus + 0.10 * confChampBonus + 0.15 * sosPct + 0.05 * h2h;
+    r.top10Wins = top10Wins;
+  });
+
+  fieldRows.sort((a, b) => b.seedScore - a.seedScore);
+  fieldRows.forEach((row, i) => { row.seed = i + 1; row.berth = autoBidNames.has(row.name) ? 'Automatic' : 'At-large'; });
+  return fieldRows;
 }
 
 // Regional round: best-of-3 series, standard bracket seeding.

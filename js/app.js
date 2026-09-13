@@ -486,7 +486,7 @@ function computePostseasonResult() {
     runConferenceTournament(rows, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + i * 17 + 3)
   );
 
-  const field = selectField(conferenceTournaments, rankings, 16);
+  const field = selectField(conferenceTournaments, rankings, state.games, 16);
   const regionals = runRegionals(field, TEAMS_BY_NAME, state.rosters, LEAGUE, state.seed + 101);
   const winners = regionals.map((m) => m.winner);
   const worldSeries = runWorldSeries(winners, LEAGUE, state.seed + 202);
@@ -925,7 +925,71 @@ function computeLeagueStats() {
     t.whip = t.outs > 0 ? (t.pBB + t.pH) / (t.outs / 3) : 0;
   });
 
-  return { teamTotals: Object.values(teamTotals), playerBatting: Object.values(playerBatting), playerPitching: Object.values(playerPitching) };
+  const playerBattingArr = Object.values(playerBatting);
+  const playerPitchingArr = Object.values(playerPitching);
+  computeWAR(playerBattingArr, playerPitchingArr);
+  return { teamTotals: Object.values(teamTotals), playerBatting: playerBattingArr, playerPitching: playerPitchingArr };
+}
+
+// A simplified WAR (Wins Above Replacement): a single number combining a
+// player's offensive and/or pitching contribution into "wins added versus
+// a freely-available replacement-level player." This is NOT a rigorous
+// sabermetric WAR -- there's no defense, baserunning, or park factor in
+// this sim, so it's built entirely from the batting/pitching events we do
+// track. It's meant as a reasonable single-stat way to compare a slugger to
+// an ace to a lockdown reliever, not a precise research-grade metric.
+//
+// Batting side uses linear-weights-style run values (approximate, borrowed
+// from published wOBA-style constants) to get runs above the league
+// average per plate appearance, then adds a fixed replacement-level
+// allowance before converting runs to wins.
+// Pitching side compares a pitcher's ERA to the league average and to a
+// replacement-level baseline (assumed noticeably worse than average),
+// scaled by innings pitched.
+function computeWAR(playerBatting, playerPitching) {
+  const RUNS_PER_WIN = 10; // standard sabermetric rule-of-thumb constant
+  const REPLACEMENT_RUNS_PER_PA = 0.03; // a replacement bat costs ~18 runs/600 PA vs. average
+  const W = { BB: 0.69, H1: 0.89, H2: 1.27, H3: 1.62, HR: 2.10 }; // approximate linear weights
+
+  let totalPA = 0;
+  let totalWeighted = 0;
+  playerBatting.forEach((p) => {
+    const pa = p.ab + p.bb;
+    const singles = p.h - p.doubles - p.triples - p.hr;
+    p._pa = pa;
+    p._weighted = W.BB * p.bb + W.H1 * singles + W.H2 * p.doubles + W.H3 * p.triples + W.HR * p.hr;
+    totalPA += pa;
+    totalWeighted += p._weighted;
+  });
+  const leagueRatePerPA = totalPA > 0 ? totalWeighted / totalPA : 0;
+
+  playerBatting.forEach((p) => {
+    if (p._pa > 0) {
+      const runsAboveAvg = p._weighted - leagueRatePerPA * p._pa;
+      const runsAboveReplacement = runsAboveAvg + REPLACEMENT_RUNS_PER_PA * p._pa;
+      p.war = runsAboveReplacement / RUNS_PER_WIN;
+    } else {
+      p.war = 0;
+    }
+    delete p._pa;
+    delete p._weighted;
+  });
+
+  let totalOuts = 0;
+  let totalER = 0;
+  playerPitching.forEach((p) => { totalOuts += p.outs; totalER += p.er; });
+  const leagueERA = totalOuts > 0 ? (totalER * 21) / totalOuts : 4.0;
+  const replacementERA = leagueERA * 1.20; // a replacement arm runs notably hotter than league average
+
+  playerPitching.forEach((p) => {
+    if (p.outs > 0) {
+      const ip = p.outs / 3;
+      const runsSavedVsReplacement = (replacementERA - (p.er * 9) / ip) * (ip / 9);
+      p.war = runsSavedVsReplacement / RUNS_PER_WIN;
+    } else {
+      p.war = 0;
+    }
+  });
 }
 
 function teamLeaderCard(title, rows, valueLabel, valueFn, count = 10) {
@@ -1029,7 +1093,17 @@ function renderLeaders() {
     const MIN_OUTS = 60; // 20 innings
     const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
     const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
+
+    // Combined WAR: a two-way player's batting and pitching WAR both count
+    // toward one total, same person either way.
+    const warByPlayer = {};
+    const warInfoById = {};
+    playerBatting.forEach((p) => { warByPlayer[p.playerId] = (warByPlayer[p.playerId] || 0) + p.war; warInfoById[p.playerId] = p; });
+    playerPitching.forEach((p) => { warByPlayer[p.playerId] = (warByPlayer[p.playerId] || 0) + p.war; if (!warInfoById[p.playerId]) warInfoById[p.playerId] = p; });
+    const warRows = Object.keys(warByPlayer).map((id) => ({ ...warInfoById[id], playerId: id, war: warByPlayer[id] }));
+
     playerCards = {
+      war: playerLeaderCard('WAR', [...warRows].sort((a, b) => b.war - a.war), 'WAR', (p) => p.war.toFixed(1)),
       avg: playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, '')),
       hr: playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr),
       rbi: playerLeaderCard('RBI', [...playerBatting].sort((a, b) => b.rbi - a.rbi), 'RBI', (p) => p.rbi),
@@ -1038,7 +1112,7 @@ function renderLeaders() {
       k: playerLeaderCard('Strikeouts (pitching)', [...playerPitching].sort((a, b) => b.k - a.k), 'K', (p) => p.k),
       wins: playerLeaderCard('Wins', [...playerPitching].sort((a, b) => b.w - a.w), 'W', (p) => p.w),
     };
-    archivedNote = ` Includes postseason games played. Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.`;
+    archivedNote = ` WAR is a simplified estimate (no defense/baserunning data in this sim) combining batting and pitching value into one number -- treat it as a rough overall-value comparison, not a precise sabermetric figure. Includes postseason games played. Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.`;
   }
 
   const teamSection = document.createElement('div');
@@ -1057,7 +1131,7 @@ function renderLeaders() {
     <h3>Player Leaders</h3>
     <p class="view-note">${archivedNote}</p>
     <div class="leaderboard-grid">
-      ${playerCards.avg}${playerCards.hr}${playerCards.rbi}${playerCards.hits}${playerCards.era}${playerCards.k}${playerCards.wins}
+      ${playerCards.war || ''}${playerCards.avg}${playerCards.hr}${playerCards.rbi}${playerCards.hits}${playerCards.era}${playerCards.k}${playerCards.wins}
     </div>
   `;
   container.appendChild(playerSection);
@@ -1372,15 +1446,15 @@ function renderPostseason() {
   // NCAA field
   const fieldSection = document.createElement('div');
   fieldSection.className = 'bracket-section';
-  fieldSection.innerHTML = '<h3>NCAA Field (Seeded 1–16)</h3>';
+  fieldSection.innerHTML = '<h3>NCAA Field (Seeded 1–16) <span class="view-note">seeding blends RPI, top-10 wins, conference tournament result, strength of schedule, and head-to-head</span></h3>';
   const table = document.createElement('table');
   table.className = 'standings-table';
   table.style.width = '100%';
-  table.innerHTML = '<thead><tr><th>Seed</th><th>Team</th><th>Berth</th><th>RPI</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Seed</th><th>Team</th><th>Berth</th><th>RPI</th><th>Top-10 Wins</th><th>SOS (OWP)</th></tr></thead>';
   const tbody = document.createElement('tbody');
   field.forEach((f) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${f.seed}</td><td>${teamLink(f.name)}</td><td>${f.berth}</td><td>${f.rpi.toFixed(3)}</td>`;
+    tr.innerHTML = `<td>${f.seed}</td><td>${teamLink(f.name)}</td><td>${f.berth}</td><td>${f.rpi.toFixed(3)}</td><td>${f.top10Wins}</td><td>${f.owp.toFixed(3)}</td>`;
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -1508,6 +1582,12 @@ function openPlayerModal(teamName, playerId) {
     ? `Two-Way — ${hitterInfo.position} / ${pitcherInfo.role}`
     : pitcherInfo ? pitcherInfo.role : hitterInfo.position;
 
+  // Current-season WAR needs league-wide context, so it's computed via the
+  // same league pass the Leaders tab uses, then looked up for this player.
+  const leagueStatsForWar = computeLeagueStats();
+  const playerWar = leagueStatsForWar.playerBatting.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0)
+    + leagueStatsForWar.playerPitching.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0);
+
   // Season totals, rolled up from the game log.
   const bt = battingLog.reduce((acc, b) => {
     acc.ab += b.ab; acc.h += b.h; acc.bb += b.bb; acc.r += b.r; acc.rbi += b.rbi;
@@ -1586,6 +1666,7 @@ function openPlayerModal(teamName, playerId) {
       <div>
         <h2>#${primary.number} ${primary.name}${isTwoWay ? ' <span class="two-way-tag">TW</span>' : ''}</h2>
         <p class="tp-sub">${primary.class} · ${roleLabel} · ${teamLink(teamName)}</p>
+        <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate)</span></p>
       </div>
     </div>
 

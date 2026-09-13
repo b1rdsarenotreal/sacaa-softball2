@@ -66,15 +66,20 @@ export function computeRankings(teams, games) {
   });
 
   const ranked = teams
-    .map((t) => ({
-      name: t.name,
-      conference: t.conference,
-      wp: wp[t.name],
-      owp: owp[t.name],
-      oowp: oowp[t.name],
-      rpi: rpi[t.name],
-      record: recordFor(playedGames, t.name),
-    }))
+    .map((t) => {
+      const rec = recordFor(playedGames, t.name);
+      return {
+        name: t.name,
+        conference: t.conference,
+        wp: wp[t.name],
+        owp: owp[t.name],
+        oowp: oowp[t.name],
+        rpi: rpi[t.name],
+        wins: rec.wins,
+        losses: rec.losses,
+        record: rec.text,
+      };
+    })
     .sort((a, b) => b.rpi - a.rpi);
 
   ranked.forEach((row, i) => { row.rank = i + 1; });
@@ -89,7 +94,7 @@ function recordFor(games, teamName) {
     const won = isHome ? g.result.homeScore > g.result.awayScore : g.result.awayScore > g.result.homeScore;
     if (won) w += 1; else l += 1;
   });
-  return `${w}-${l}`;
+  return { wins: w, losses: l, text: `${w}-${l}` };
 }
 
 export function top25(rankings) {
