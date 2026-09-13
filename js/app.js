@@ -6,8 +6,9 @@ import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rank
 import { runConferenceTournament, selectField, runRegionals, runWorldSeries, roundLabel } from './engine/postseason.js';
 
 const STORAGE_KEY = 'sacaa-season-v2';
-const SCHEMA_VERSION = 3; // bumped from 2: added dynasty fields (history, dynastyYear, lastHomeMap)
+const SCHEMA_VERSION = 4; // bumped from 3: added currentSeasonLog for weekly archive snapshots
 const LOGO_STORAGE_KEY = 'sacaa-custom-logos-v1';
+const CONF_LOGO_STORAGE_KEY = 'sacaa-custom-conf-logos-v1';
 
 // --- IndexedDB ---------------------------------------------------------
 // IndexedDB instead of localStorage: its practical quota is tied to
@@ -95,14 +96,23 @@ let PROGRAM_PRESTIGE = {};
 let LEAGUE = null;
 let state = null;
 let customLogos = {};
-let pendingLogoTeam = null;
+let customConfLogos = {};
+let pendingLogoUpload = null; // { kind: 'team' | 'conference', name }
+
+const LOGO_TARGET_SIZE = 200; // square, px -- upload anything this ratio (or close) for a pixel-perfect fit
 
 async function loadCustomLogos() {
   try {
     customLogos = (await idbGet(LOGO_STORAGE_KEY)) || {};
   } catch (err) {
-    console.error('Failed to load custom logos:', err);
+    console.error('Failed to load custom team logos:', err);
     customLogos = {};
+  }
+  try {
+    customConfLogos = (await idbGet(CONF_LOGO_STORAGE_KEY)) || {};
+  } catch (err) {
+    console.error('Failed to load custom conference logos:', err);
+    customConfLogos = {};
   }
 }
 
@@ -115,23 +125,36 @@ async function saveCustomLogos() {
   }
 }
 
-// Reads an uploaded image file, crops it to a centered square, downsizes it
-// (logos don't need to be huge), and hands back a compact PNG data URL.
-function resizeImageFile(file, maxSize, callback) {
+async function saveCustomConfLogos() {
+  try {
+    await idbSet(CONF_LOGO_STORAGE_KEY, customConfLogos);
+  } catch (err) {
+    console.error('Failed to save conference logo:', err);
+    alert(`Couldn't save that logo: ${(err && err.message) || err}`);
+  }
+}
+
+// Reads an uploaded image file and fits it into a square (contain, not
+// crop), so the whole logo stays visible -- nothing gets chopped off the
+// way a cover-crop would. An image that's already square (any resolution)
+// fills the badge with zero padding; anything else gets letterboxed rather
+// than cropped.
+function resizeImageFile(file, targetSize, callback) {
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = maxSize;
-      canvas.height = maxSize;
+      canvas.width = targetSize;
+      canvas.height = targetSize;
       const ctx = canvas.getContext('2d');
-      const scale = Math.max(maxSize / img.width, maxSize / img.height);
-      const sw = maxSize / scale;
-      const sh = maxSize / scale;
-      const sx = (img.width - sw) / 2;
-      const sy = (img.height - sh) / 2;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, maxSize, maxSize);
+      const scale = Math.min(targetSize / img.width, targetSize / img.height);
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      const dx = (targetSize - dw) / 2;
+      const dy = (targetSize - dh) / 2;
+      ctx.clearRect(0, 0, targetSize, targetSize);
+      ctx.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
       callback(canvas.toDataURL('image/png'));
     };
     img.onerror = () => alert("Couldn't read that image file.");
@@ -150,6 +173,16 @@ async function clearCustomLogo(teamName) {
   await saveCustomLogos();
 }
 
+async function setCustomConfLogo(confName, dataUrl) {
+  customConfLogos[confName] = dataUrl;
+  await saveCustomConfLogos();
+}
+
+async function clearCustomConfLogo(confName) {
+  delete customConfLogos[confName];
+  await saveCustomConfLogos();
+}
+
 // Any already-rendered view showing badges needs a refresh after a logo
 // changes (Teams grid is otherwise only rendered once for performance).
 function refreshAfterLogoChange(teamName) {
@@ -162,12 +195,27 @@ function refreshAfterLogoChange(teamName) {
   }
 }
 
+function refreshAfterConfLogoChange(confName) {
+  document.getElementById('teamsGrid').innerHTML = '';
+  renderTeams();
+  renderStandings();
+  if (document.getElementById('teamModalOverlay').classList.contains('open')) {
+    openConferenceModal(confName);
+  }
+}
+
 function wireLogoUpload() {
   const fileInput = document.getElementById('logoFileInput');
   document.addEventListener('click', async (e) => {
     const uploadBtn = e.target.closest('[data-upload-team]');
     if (uploadBtn) {
-      pendingLogoTeam = uploadBtn.dataset.uploadTeam;
+      pendingLogoUpload = { kind: 'team', name: uploadBtn.dataset.uploadTeam };
+      fileInput.click();
+      return;
+    }
+    const uploadConfBtn = e.target.closest('[data-upload-conf]');
+    if (uploadConfBtn) {
+      pendingLogoUpload = { kind: 'conference', name: uploadConfBtn.dataset.uploadConf };
       fileInput.click();
       return;
     }
@@ -175,16 +223,28 @@ function wireLogoUpload() {
     if (resetBtn) {
       await clearCustomLogo(resetBtn.dataset.resetLogoTeam);
       refreshAfterLogoChange(resetBtn.dataset.resetLogoTeam);
+      return;
+    }
+    const resetConfBtn = e.target.closest('[data-reset-logo-conf]');
+    if (resetConfBtn) {
+      await clearCustomConfLogo(resetConfBtn.dataset.resetLogoConf);
+      refreshAfterConfLogoChange(resetConfBtn.dataset.resetLogoConf);
     }
   });
   fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     fileInput.value = '';
-    if (!file || !pendingLogoTeam) return;
+    if (!file || !pendingLogoUpload) return;
     if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
-    resizeImageFile(file, 160, async (dataUrl) => {
-      await setCustomLogo(pendingLogoTeam, dataUrl);
-      refreshAfterLogoChange(pendingLogoTeam);
+    const upload = pendingLogoUpload;
+    resizeImageFile(file, LOGO_TARGET_SIZE, async (dataUrl) => {
+      if (upload.kind === 'team') {
+        await setCustomLogo(upload.name, dataUrl);
+        refreshAfterLogoChange(upload.name);
+      } else {
+        await setCustomConfLogo(upload.name, dataUrl);
+        refreshAfterConfLogoChange(upload.name);
+      }
     });
   });
 }
@@ -207,9 +267,10 @@ function freshState(seed) {
   return {
     schemaVersion: SCHEMA_VERSION,
     seed,
-    dynastyYear: 1,
+    dynastyYear: 2013,
     history: [],
     lastHomeMap: schedule.homeMap,
+    currentSeasonLog: { weeks: [] },
     totalWeeks: schedule.totalWeeks,
     currentWeek: 1,
     games: schedule.games,
@@ -306,6 +367,56 @@ function regenerateGameResult(game) {
   return simulateGame(awayGR, homeGR, LEAGUE, game.id * 7919 + state.seed, seasonProgressForWeek(game.week));
 }
 
+// Snapshots RPI, Coaches Poll, standings, and every leaderboard category as
+// of right now, keyed to the current week -- this is what lets a past
+// week/year actually be browsed later instead of only ever seeing the
+// latest state. Computed the same way the live tabs compute it, just
+// stored. The leaderboard pass (computeLeagueStats) is the expensive part
+// (~60ms for a full season), so this adds real but bounded time to each
+// week of simulation.
+function snapshotWeek(week) {
+  const rankings = computeRankings(TEAMS, state.games);
+  const rpi = top25(rankings).map((r) => ({ rank: r.rank, name: r.name, conference: r.conference, record: r.record, rpi: r.rpi }));
+
+  const standingsRows = computeStandings(TEAMS, state.games);
+  const poll = computeCoachesPoll(standingsRows, PROGRAM_PRESTIGE, state.seed);
+  const coachesPoll = top15(poll).map((r) => ({ rank: r.rank, name: r.name, conference: r.conference, record: r.record }));
+
+  const standings = standingsRows.map((r) => ({
+    name: r.name, conference: r.conference, wins: r.wins, losses: r.losses, confWins: r.confWins, confLosses: r.confLosses, runDiff: r.runDiff,
+    pct: r.pct, confPct: r.confPct,
+  }));
+
+  const { teamTotals, playerBatting, playerPitching } = computeLeagueStats();
+  const MIN_AB = 40;
+  const MIN_OUTS = 60;
+  const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
+  const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
+  const top = (arr, n = 10) => arr.slice(0, n);
+  const teamRow = (t, value) => ({ name: t.name, conference: t.conference, value });
+  const playerRow = (p, value) => ({ playerId: p.playerId, name: p.name, number: p.number, team: p.team, conference: p.conference, twoWay: p.twoWay, value });
+
+  const teamLeaders = {
+    avg: top([...teamTotals].sort((a, b) => b.avg - a.avg)).map((t) => teamRow(t, t.avg)),
+    slg: top([...teamTotals].sort((a, b) => b.slg - a.slg)).map((t) => teamRow(t, t.slg)),
+    hr: top([...teamTotals].sort((a, b) => b.hr - a.hr)).map((t) => teamRow(t, t.hr)),
+    era: top([...teamTotals].sort((a, b) => a.era - b.era)).map((t) => teamRow(t, t.era)),
+    whip: top([...teamTotals].sort((a, b) => a.whip - b.whip)).map((t) => teamRow(t, t.whip)),
+    k: top([...teamTotals].sort((a, b) => b.pK - a.pK)).map((t) => teamRow(t, t.pK)),
+  };
+  const playerLeaders = {
+    avg: top([...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab))).map((p) => playerRow(p, p.h / p.ab)),
+    hr: top([...playerBatting].sort((a, b) => b.hr - a.hr)).map((p) => playerRow(p, p.hr)),
+    rbi: top([...playerBatting].sort((a, b) => b.rbi - a.rbi)).map((p) => playerRow(p, p.rbi)),
+    hits: top([...playerBatting].sort((a, b) => b.h - a.h)).map((p) => playerRow(p, p.h)),
+    era: top([...qualifiedPitchers].sort((a, b) => ((a.er * 21) / a.outs) - ((b.er * 21) / b.outs))).map((p) => playerRow(p, (p.er * 21) / p.outs)),
+    k: top([...playerPitching].sort((a, b) => b.k - a.k)).map((p) => playerRow(p, p.k)),
+    wins: top([...playerPitching].sort((a, b) => b.w - a.w)).map((p) => playerRow(p, p.w)),
+  };
+
+  state.currentSeasonLog.weeks.push({ week, rpi, coachesPoll, standings, teamLeaders, playerLeaders });
+}
+
 async function simWeek() {
   if (state.regularSeasonComplete) return;
   try {
@@ -324,6 +435,7 @@ async function simWeek() {
     } else {
       state.currentWeek = week + 1;
     }
+    snapshotWeek(week);
     await saveState();
     renderAll();
     setMessage(`Week ${week} simulated (${weekGames.length} games).`);
@@ -362,6 +474,7 @@ function simWeekQuiet() {
   });
   if (week >= state.totalWeeks) state.regularSeasonComplete = true;
   else state.currentWeek = week + 1;
+  snapshotWeek(week);
 }
 
 function computePostseasonResult() {
@@ -388,6 +501,92 @@ function computePostseasonResult() {
 // cache it in memory for the rest of the session. Invalidated whenever the
 // postseason is (re-)simulated or a new season starts.
 let postseasonFullCache = null;
+
+// --- Archive browsing (year/week filter) -----------------------------
+// Lets Standings/Rankings/Leaders/Postseason show a stored snapshot from
+// any past week or dynasty year instead of the live current state.
+// { year: 'current' | <year number>, week: 'latest' | 'postseason' | <week number> }
+let archiveFilter = { year: 'current', week: 'latest' };
+
+function getWeeksArrayForYear(year) {
+  if (year === 'current') return state.currentSeasonLog.weeks;
+  const h = state.history.find((x) => x.year === year);
+  return h ? h.weeks : [];
+}
+
+function yearHasPostseason(year) {
+  if (year === 'current') return !!state.postseason;
+  const h = state.history.find((x) => x.year === year);
+  return !!(h && h.postseasonBracket);
+}
+
+function populateArchiveBar() {
+  const yearSelect = document.getElementById('archiveYear');
+  const pastYears = state.history.map((h) => h.year).sort((a, b) => b - a);
+  yearSelect.innerHTML = `<option value="current">${state.dynastyYear} (current)</option>`
+    + pastYears.map((y) => `<option value="${y}">${y}</option>`).join('');
+  yearSelect.value = archiveFilter.year === 'current' ? 'current' : String(archiveFilter.year);
+  if (yearSelect.value === '') { archiveFilter.year = 'current'; yearSelect.value = 'current'; }
+  populateArchiveWeekOptions();
+}
+
+function populateArchiveWeekOptions() {
+  const weekSelect = document.getElementById('archiveWeek');
+  const year = archiveFilter.year;
+  const weeks = getWeeksArrayForYear(year);
+  const hasPostseason = yearHasPostseason(year);
+
+  let options = '';
+  if (year === 'current') options += '<option value="latest">Latest</option>';
+  weeks.forEach((w) => { options += `<option value="${w.week}">Week ${w.week}</option>`; });
+  if (hasPostseason) options += '<option value="postseason">Postseason (Final)</option>';
+  weekSelect.innerHTML = options;
+
+  const desired = String(archiveFilter.week);
+  if ([...weekSelect.options].some((o) => o.value === desired)) {
+    weekSelect.value = desired;
+  } else {
+    weekSelect.value = year === 'current' ? 'latest' : (hasPostseason ? 'postseason' : (weeks.length ? String(weeks[weeks.length - 1].week) : 'latest'));
+    archiveFilter.week = weekSelect.value === 'postseason' || weekSelect.value === 'latest' ? weekSelect.value : Number(weekSelect.value);
+  }
+
+  const note = document.getElementById('archiveBarNote');
+  note.textContent = (archiveFilter.year === 'current' && archiveFilter.week === 'latest')
+    ? ''
+    : 'Showing archived data for the selected year/week -- not the live current state.';
+}
+
+// Returns the stored weekly snapshot to show, or null if the filter is set
+// to "live current" (in which case callers should compute live data as
+// normal). Doesn't cover postseason brackets -- see getArchivePostseasonBracket.
+function getArchiveSnapshot() {
+  if (archiveFilter.year === 'current' && archiveFilter.week === 'latest') return null;
+  const weeks = getWeeksArrayForYear(archiveFilter.year);
+  if (archiveFilter.week === 'postseason') return weeks[weeks.length - 1] || null;
+  return weeks.find((w) => w.week === archiveFilter.week) || null;
+}
+
+// The postseason tab only varies by year (a past year's postseason is
+// always its final, completed bracket regardless of which week is picked).
+function getArchivePostseasonBracket() {
+  if (archiveFilter.year === 'current') return state.postseason;
+  const h = state.history.find((x) => x.year === archiveFilter.year);
+  return h ? h.postseasonBracket : null;
+}
+
+function wireArchiveBar() {
+  document.getElementById('archiveYear').addEventListener('change', (e) => {
+    archiveFilter = { year: e.target.value === 'current' ? 'current' : Number(e.target.value), week: 'latest' };
+    populateArchiveWeekOptions();
+    renderStandings(); renderRankings(); renderLeaders(); renderPostseason();
+  });
+  document.getElementById('archiveWeek').addEventListener('change', (e) => {
+    archiveFilter.week = e.target.value === 'postseason' || e.target.value === 'latest' ? e.target.value : Number(e.target.value);
+    populateArchiveWeekOptions();
+    renderStandings(); renderRankings(); renderLeaders(); renderPostseason();
+  });
+}
+
 function getPostseasonFull() {
   if (!postseasonFullCache) postseasonFullCache = computePostseasonResult();
   return postseasonFullCache;
@@ -541,6 +740,8 @@ function archiveSeason() {
   state.history.push({
     year: state.dynastyYear,
     teamRecords, teamStats, playerStats, conferenceChamps, nationalChampion,
+    postseasonBracket: state.postseason,
+    weeks: state.currentSeasonLog.weeks,
   });
 }
 
@@ -577,6 +778,7 @@ async function advanceToNextSeason() {
     state.regularSeasonComplete = false;
     state.postseason = null;
     postseasonFullCache = null;
+    state.currentSeasonLog = { weeks: [] };
 
     await saveState();
     renderAll();
@@ -761,11 +963,6 @@ function playerLeaderCard(title, rows, valueLabel, valueFn, count = 10) {
 function renderLeaders() {
   const container = document.getElementById('leadersContent');
   container.innerHTML = '';
-  const played = state.games.some((g) => g.played);
-  if (!played) {
-    container.innerHTML = '<p class="view-note">Simulate a week to generate league leaders.</p>';
-    return;
-  }
 
   const filterSelect = document.getElementById('leaderConfFilter');
   if (filterSelect.options.length <= 1) {
@@ -777,45 +974,90 @@ function renderLeaders() {
     });
   }
   const confFilter = filterSelect.value || 'all';
+  const snapshot = getArchiveSnapshot();
 
-  const { teamTotals: allTeamTotals, playerBatting: allPlayerBatting, playerPitching: allPlayerPitching } = computeLeagueStats();
-  const teamTotals = confFilter === 'all' ? allTeamTotals : allTeamTotals.filter((t) => t.conference === confFilter);
-  const playerBatting = confFilter === 'all' ? allPlayerBatting : allPlayerBatting.filter((p) => p.conference === confFilter);
-  const playerPitching = confFilter === 'all' ? allPlayerPitching : allPlayerPitching.filter((p) => p.conference === confFilter);
+  let teamCards;
+  let playerCards;
+  let archivedNote = '';
+
+  if (snapshot) {
+    // Archived snapshots already store the top 10 for each category
+    // globally -- filtering to one conference after the fact can come up
+    // short of 10 (or empty) if that conference wasn't well represented at
+    // the time, since we don't keep the full league list for every past week.
+    const filt = (rows) => (confFilter === 'all' ? rows : rows.filter((r) => r.conference === confFilter));
+    const fmtPct = (v) => v.toFixed(3).replace(/^0/, '');
+    teamCards = {
+      avg: teamLeaderCard('Batting AVG', filt(snapshot.teamLeaders.avg), 'AVG', (r) => fmtPct(r.value)),
+      slg: teamLeaderCard('Slugging (SLG)', filt(snapshot.teamLeaders.slg), 'SLG', (r) => fmtPct(r.value)),
+      hr: teamLeaderCard('Home Runs', filt(snapshot.teamLeaders.hr), 'HR', (r) => r.value),
+      era: teamLeaderCard('ERA', filt(snapshot.teamLeaders.era), 'ERA', (r) => r.value.toFixed(2)),
+      whip: teamLeaderCard('WHIP', filt(snapshot.teamLeaders.whip), 'WHIP', (r) => r.value.toFixed(2)),
+      k: teamLeaderCard('Strikeouts (pitching)', filt(snapshot.teamLeaders.k), 'K', (r) => r.value),
+    };
+    playerCards = {
+      avg: playerLeaderCard('Batting AVG', filt(snapshot.playerLeaders.avg), 'AVG', (r) => fmtPct(r.value)),
+      hr: playerLeaderCard('Home Runs', filt(snapshot.playerLeaders.hr), 'HR', (r) => r.value),
+      rbi: playerLeaderCard('RBI', filt(snapshot.playerLeaders.rbi), 'RBI', (r) => r.value),
+      hits: playerLeaderCard('Hits', filt(snapshot.playerLeaders.hits), 'H', (r) => r.value),
+      era: playerLeaderCard('ERA', filt(snapshot.playerLeaders.era), 'ERA', (r) => r.value.toFixed(2)),
+      k: playerLeaderCard('Strikeouts (pitching)', filt(snapshot.playerLeaders.k), 'K', (r) => r.value),
+      wins: playerLeaderCard('Wins', filt(snapshot.playerLeaders.wins), 'W', (r) => r.value),
+    };
+    archivedNote = ' Archived snapshots store the top 10 leaguewide, so filtering to one conference may show fewer than 10 (or none) if that conference wasn\'t well represented at the time.';
+  } else {
+    const played = state.games.some((g) => g.played);
+    if (!played) {
+      container.innerHTML = '<p class="view-note">Simulate a week to generate league leaders.</p>';
+      return;
+    }
+    const { teamTotals: allTeamTotals, playerBatting: allPlayerBatting, playerPitching: allPlayerPitching } = computeLeagueStats();
+    const teamTotals = confFilter === 'all' ? allTeamTotals : allTeamTotals.filter((t) => t.conference === confFilter);
+    const playerBatting = confFilter === 'all' ? allPlayerBatting : allPlayerBatting.filter((p) => p.conference === confFilter);
+    const playerPitching = confFilter === 'all' ? allPlayerPitching : allPlayerPitching.filter((p) => p.conference === confFilter);
+
+    teamCards = {
+      avg: teamLeaderCard('Batting AVG', [...teamTotals].sort((a, b) => b.avg - a.avg), 'AVG', (t) => t.avg.toFixed(3).replace(/^0/, '')),
+      slg: teamLeaderCard('Slugging (SLG)', [...teamTotals].sort((a, b) => b.slg - a.slg), 'SLG', (t) => t.slg.toFixed(3).replace(/^0/, '')),
+      hr: teamLeaderCard('Home Runs', [...teamTotals].sort((a, b) => b.hr - a.hr), 'HR', (t) => t.hr),
+      era: teamLeaderCard('ERA', [...teamTotals].sort((a, b) => a.era - b.era), 'ERA', (t) => t.era.toFixed(2)),
+      whip: teamLeaderCard('WHIP', [...teamTotals].sort((a, b) => a.whip - b.whip), 'WHIP', (t) => t.whip.toFixed(2)),
+      k: teamLeaderCard('Strikeouts (pitching)', [...teamTotals].sort((a, b) => b.pK - a.pK), 'K', (t) => t.pK),
+    };
+
+    const MIN_AB = 40;
+    const MIN_OUTS = 60; // 20 innings
+    const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
+    const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
+    playerCards = {
+      avg: playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, '')),
+      hr: playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr),
+      rbi: playerLeaderCard('RBI', [...playerBatting].sort((a, b) => b.rbi - a.rbi), 'RBI', (p) => p.rbi),
+      hits: playerLeaderCard('Hits', [...playerBatting].sort((a, b) => b.h - a.h), 'H', (p) => p.h),
+      era: playerLeaderCard('ERA', [...qualifiedPitchers].sort((a, b) => ((a.er * 21) / a.outs) - ((b.er * 21) / b.outs)), 'ERA', (p) => ((p.er * 21) / p.outs).toFixed(2)),
+      k: playerLeaderCard('Strikeouts (pitching)', [...playerPitching].sort((a, b) => b.k - a.k), 'K', (p) => p.k),
+      wins: playerLeaderCard('Wins', [...playerPitching].sort((a, b) => b.w - a.w), 'W', (p) => p.w),
+    };
+    archivedNote = ` Includes postseason games played. Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.`;
+  }
 
   const teamSection = document.createElement('div');
   teamSection.className = 'bracket-section';
   teamSection.innerHTML = `
     <h3>Team Leaders</h3>
     <div class="leaderboard-grid">
-      ${teamLeaderCard('Batting AVG', [...teamTotals].sort((a, b) => b.avg - a.avg), 'AVG', (t) => t.avg.toFixed(3).replace(/^0/, ''))}
-      ${teamLeaderCard('Slugging (SLG)', [...teamTotals].sort((a, b) => b.slg - a.slg), 'SLG', (t) => t.slg.toFixed(3).replace(/^0/, ''))}
-      ${teamLeaderCard('Home Runs', [...teamTotals].sort((a, b) => b.hr - a.hr), 'HR', (t) => t.hr)}
-      ${teamLeaderCard('ERA', [...teamTotals].sort((a, b) => a.era - b.era), 'ERA', (t) => t.era.toFixed(2))}
-      ${teamLeaderCard('WHIP', [...teamTotals].sort((a, b) => a.whip - b.whip), 'WHIP', (t) => t.whip.toFixed(2))}
-      ${teamLeaderCard('Strikeouts (pitching)', [...teamTotals].sort((a, b) => b.pK - a.pK), 'K', (t) => t.pK)}
+      ${teamCards.avg}${teamCards.slg}${teamCards.hr}${teamCards.era}${teamCards.whip}${teamCards.k}
     </div>
   `;
   container.appendChild(teamSection);
-
-  const MIN_AB = 40;
-  const MIN_OUTS = 60; // 20 innings
-  const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
-  const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
 
   const playerSection = document.createElement('div');
   playerSection.className = 'bracket-section';
   playerSection.innerHTML = `
     <h3>Player Leaders</h3>
-    <p class="view-note">Includes postseason games played. Batting rate stats require ${MIN_AB}+ at-bats; pitching rate stats require ${Math.floor(MIN_OUTS / 3)}+ innings. Counting stats (HR, RBI, K, etc.) have no minimum.</p>
+    <p class="view-note">${archivedNote}</p>
     <div class="leaderboard-grid">
-      ${playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, ''))}
-      ${playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr)}
-      ${playerLeaderCard('RBI', [...playerBatting].sort((a, b) => b.rbi - a.rbi), 'RBI', (p) => p.rbi)}
-      ${playerLeaderCard('Hits', [...playerBatting].sort((a, b) => b.h - a.h), 'H', (p) => p.h)}
-      ${playerLeaderCard('ERA', [...qualifiedPitchers].sort((a, b) => ((a.er * 21) / a.outs) - ((b.er * 21) / b.outs)), 'ERA', (p) => ((p.er * 21) / p.outs).toFixed(2))}
-      ${playerLeaderCard('Strikeouts (pitching)', [...playerPitching].sort((a, b) => b.k - a.k), 'K', (p) => p.k)}
-      ${playerLeaderCard('Wins', [...playerPitching].sort((a, b) => b.w - a.w), 'W', (p) => p.w)}
+      ${playerCards.avg}${playerCards.hr}${playerCards.rbi}${playerCards.hits}${playerCards.era}${playerCards.k}${playerCards.wins}
     </div>
   `;
   container.appendChild(playerSection);
@@ -830,6 +1072,7 @@ function setMessage(msg) {
 function renderAll() {
   renderStatus();
   renderControls();
+  populateArchiveBar();
   renderSchedule();
   renderStandings();
   renderRankings();
@@ -936,7 +1179,8 @@ function renderSchedule() {
 function renderStandings() {
   const grid = document.getElementById('standingsGrid');
   grid.innerHTML = '';
-  const standings = computeStandings(TEAMS, state.games);
+  const snapshot = getArchiveSnapshot();
+  const standings = snapshot ? snapshot.standings : computeStandings(TEAMS, state.games);
   const byConf = standingsByConference(standings);
 
   Object.entries(byConf)
@@ -973,16 +1217,26 @@ function renderRankings() {
   const pollList = document.getElementById('coachesPollList');
   rpiList.innerHTML = '';
   pollList.innerHTML = '';
-  const played = state.games.some((g) => g.played);
-  if (!played) {
-    const note = '<p class="view-note">Simulate a week to generate the first poll.</p>';
-    rpiList.innerHTML = note;
-    pollList.innerHTML = note;
-    return;
+
+  const snapshot = getArchiveSnapshot();
+  let rpiRows;
+  let pollRows;
+  if (snapshot) {
+    rpiRows = snapshot.rpi;
+    pollRows = snapshot.coachesPoll;
+  } else {
+    const played = state.games.some((g) => g.played);
+    if (!played) {
+      const note = '<p class="view-note">Simulate a week to generate the first poll.</p>';
+      rpiList.innerHTML = note;
+      pollList.innerHTML = note;
+      return;
+    }
+    rpiRows = top25(computeRankings(TEAMS, state.games));
+    pollRows = top15(computeCoachesPoll(computeStandings(TEAMS, state.games), PROGRAM_PRESTIGE, state.seed));
   }
 
-  const rankings = computeRankings(TEAMS, state.games);
-  top25(rankings).forEach((r) => {
+  rpiRows.forEach((r) => {
     const li = document.createElement('li');
     li.className = 'rank-row';
     li.innerHTML = `
@@ -994,9 +1248,7 @@ function renderRankings() {
     rpiList.appendChild(li);
   });
 
-  const standings = computeStandings(TEAMS, state.games);
-  const poll = computeCoachesPoll(standings, PROGRAM_PRESTIGE, state.seed);
-  top15(poll).forEach((r) => {
+  pollRows.forEach((r) => {
     const li = document.createElement('li');
     li.className = 'rank-row';
     li.innerHTML = `
@@ -1039,11 +1291,11 @@ function matchCardHTML(m, prefix) {
 
 // Builds one match card, wiring it up to reopen its box score (regenerated
 // on demand -- see getPostseasonFull) if it's a real, playable match.
-function buildMatchCard(m, path, prefix) {
+function buildMatchCard(m, path, prefix, clickable = true) {
   const card = document.createElement('div');
   card.className = 'bmatch';
   card.innerHTML = matchCardHTML(m, prefix);
-  if (m.a && m.b) {
+  if (m.a && m.b && clickable) {
     card.classList.add('bmatch-clickable');
     card.dataset.psPath = JSON.stringify(path);
   }
@@ -1055,7 +1307,10 @@ function buildMatchCard(m, path, prefix) {
 // via flexbox. Works for any bracket whose round sizes halve each step
 // (which every bracket in this app does). `pathPrefix` locates this set of
 // rounds within state.postseason, e.g. ['conferenceTournaments', 3, 'rounds'].
-function renderBracketTree(rounds, roundLabels, pathPrefix) {
+// `clickable` is false when browsing a past dynasty year's archived
+// bracket -- box scores for those aren't regenerable (see the comment on
+// getArchivePostseasonBracket), so those matches are shown but inert.
+function renderBracketTree(rounds, roundLabels, pathPrefix, clickable = true) {
   const tree = document.createElement('div');
   tree.className = 'bracket-tree';
   rounds.forEach((round, i) => {
@@ -1069,7 +1324,7 @@ function renderBracketTree(rounds, roundLabels, pathPrefix) {
     const matchesWrap = document.createElement('div');
     matchesWrap.className = 'bracket-col-matches';
     round.forEach((m, j) => {
-      matchesWrap.appendChild(buildMatchCard(m, [...pathPrefix, i, j]));
+      matchesWrap.appendChild(buildMatchCard(m, [...pathPrefix, i, j], null, clickable));
     });
     col.appendChild(matchesWrap);
     tree.appendChild(col);
@@ -1081,16 +1336,20 @@ function renderPostseason() {
   const container = document.getElementById('postseasonContent');
   container.innerHTML = '';
 
-  if (!state.regularSeasonComplete) {
+  if (!state.regularSeasonComplete && archiveFilter.year === 'current') {
     container.innerHTML = '<p class="view-note">Finish the regular season to unlock conference tournaments and the NCAA bracket.</p>';
     return;
   }
-  if (!state.postseason) {
-    container.innerHTML = '<p class="view-note">Regular season complete. Click "Sim Postseason" to run conference tournaments through the World Series.</p>';
+  const postseason = getArchivePostseasonBracket();
+  if (!postseason) {
+    container.innerHTML = archiveFilter.year === 'current'
+      ? '<p class="view-note">Regular season complete. Click "Sim Postseason" to run conference tournaments through the World Series.</p>'
+      : '<p class="view-note">No postseason recorded for that year.</p>';
     return;
   }
+  const clickable = archiveFilter.year === 'current';
 
-  const { conferenceTournaments, field, regionals, worldSeries } = state.postseason;
+  const { conferenceTournaments, field, regionals, worldSeries } = postseason;
 
   const banner = document.createElement('div');
   banner.className = 'champion-banner';
@@ -1100,12 +1359,12 @@ function renderPostseason() {
   // Conference tournaments -- one visual bracket tree per conference
   const confSection = document.createElement('div');
   confSection.className = 'bracket-section';
-  confSection.innerHTML = '<h3>Conference Tournaments <span class="view-note">click any match for its box score</span></h3>';
+  confSection.innerHTML = `<h3>Conference Tournaments ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3>`;
   conferenceTournaments.forEach((ct, ci) => {
     const confWrap = document.createElement('div');
     confWrap.className = 'conf-tourney-block';
     confWrap.innerHTML = `<div class="conf-champ-line"><strong>${ct.conference}</strong> champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
-    confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds']));
+    confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds'], clickable));
     confSection.appendChild(confWrap);
   });
   container.appendChild(confSection);
@@ -1132,11 +1391,11 @@ function renderPostseason() {
   // since there's nothing upstream to connect them to yet.
   const regSection = document.createElement('div');
   regSection.className = 'bracket-section';
-  regSection.innerHTML = '<h3>Regionals (Best-of-3) <span class="view-note">click for the series\' box scores</span></h3>';
+  regSection.innerHTML = `<h3>Regionals (Best-of-3) ${clickable ? '<span class="view-note">click for the series\' box scores</span>' : ''}</h3>`;
   const regGrid = document.createElement('div');
   regGrid.className = 'bracket-grid';
   regionals.forEach((m, i) => {
-    regGrid.appendChild(buildMatchCard(m, ['regionals', i]));
+    regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
   });
   regSection.appendChild(regGrid);
   container.appendChild(regSection);
@@ -1145,19 +1404,19 @@ function renderPostseason() {
   // bracket tree, then the grand final (with an "if necessary" decider).
   const wsSection = document.createElement('div');
   wsSection.className = 'bracket-section';
-  wsSection.innerHTML = '<h3>World Series <span class="view-note">(double elimination) — click any match for its box score</span></h3>';
+  wsSection.innerHTML = `<h3>World Series <span class="view-note">(double elimination)${clickable ? ' — click any match for its box score' : ''}</span></h3>`;
 
   const wbLabel = document.createElement('div');
   wbLabel.className = 'ws-bracket-label';
   wbLabel.textContent = "Winners' Bracket";
   wsSection.appendChild(wbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket']));
+  wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket'], clickable));
 
   const lbLabel = document.createElement('div');
   lbLabel.className = 'ws-bracket-label';
   lbLabel.textContent = "Losers' Bracket";
   wsSection.appendChild(lbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket']));
+  wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket'], clickable));
 
   const gfLabel = document.createElement('div');
   gfLabel.className = 'ws-bracket-label';
@@ -1165,9 +1424,9 @@ function renderPostseason() {
   wsSection.appendChild(gfLabel);
   const gfGrid = document.createElement('div');
   gfGrid.className = 'bracket-grid';
-  gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1'));
+  gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1', clickable));
   if (worldSeries.grandFinal.game2) {
-    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)'));
+    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable));
   }
   wsSection.appendChild(gfGrid);
   container.appendChild(wsSection);
@@ -1194,21 +1453,34 @@ function renderTeams() {
   });
 }
 
-function teamBadge(name, size = 20, extraClass = '') {
-  const width = Math.round(size * 1.4);
-  const customLogo = customLogos[name];
+// Shared badge renderer: an uploaded logo (rendered exactly as stored, no
+// further cropping -- see resizeImageFile for how it got fit into a square)
+// or a generated colored square with initials. Used by both teamBadge and
+// confBadge.
+function buildBadgeHTML(customLogo, colors, initials, size, extraClass, altText) {
   if (customLogo) {
-    return `<img class="team-badge ${extraClass}" width="${width}" height="${size}" src="${customLogo}" alt="${name} logo">`;
+    return `<img class="team-badge ${extraClass}" width="${size}" height="${size}" src="${customLogo}" alt="${altText}">`;
   }
-  const team = TEAMS_BY_NAME[name];
-  if (!team) return '';
-  const colors = team.colors || { primary: '#0F3324', secondary: '#D7E600' };
-  const initials = (team.abbr || name.slice(0, 3)).slice(0, 3);
-  const fontSize = initials.length >= 3 ? 40 : 52;
-  return `<svg class="team-badge ${extraClass}" width="${width}" height="${size}" viewBox="0 0 140 100" aria-hidden="true">
-    <rect x="4" y="4" width="132" height="92" rx="14" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
-    <text x="70" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
+  const fontSize = initials.length >= 3 ? 34 : 46;
+  return `<svg class="team-badge ${extraClass}" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <rect x="4" y="4" width="92" height="92" rx="14" fill="${colors.primary}" stroke="${colors.secondary}" stroke-width="7"/>
+    <text x="50" y="53" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk', sans-serif" font-weight="700" font-size="${fontSize}" fill="#ffffff">${initials}</text>
   </svg>`;
+}
+
+function teamBadge(name, size = 20, extraClass = '') {
+  const customLogo = customLogos[name];
+  const team = TEAMS_BY_NAME[name];
+  if (!customLogo && !team) return '';
+  const colors = (team && team.colors) || { primary: '#0F3324', secondary: '#D7E600' };
+  const initials = (team && (team.abbr || name.slice(0, 3)).slice(0, 3)) || name.slice(0, 3);
+  return buildBadgeHTML(customLogo, colors, initials, size, extraClass, `${name} logo`);
+}
+
+function confBadge(confName, size = 20, extraClass = '') {
+  const customLogo = customConfLogos[confName];
+  const color = CONFERENCES[confName]?.color || '#0F3324';
+  return buildBadgeHTML(customLogo, { primary: color, secondary: '#ffffff' }, confName.slice(0, 4), size, extraClass, `${confName} logo`);
 }
 
 function teamLink(name, opts = {}) {
@@ -1235,27 +1507,6 @@ function openPlayerModal(teamName, playerId) {
   const roleLabel = isTwoWay
     ? `Two-Way — ${hitterInfo.position} / ${pitcherInfo.role}`
     : pitcherInfo ? pitcherInfo.role : hitterInfo.position;
-
-  // Career history: this player's stat line from every past dynasty season
-  // they appeared in (only returning players carry a stable id across
-  // years, so recruits simply won't have any history entries yet).
-  const careerHistory = state.history
-    .map((h) => ({ year: h.year, stats: h.playerStats[playerId] }))
-    .filter((h) => h.stats);
-  const careerRows = careerHistory.map((h) => {
-    const s = h.stats;
-    let battingLine = '—';
-    if (s.batting && s.batting.ab > 0) {
-      const avg = s.batting.h / s.batting.ab;
-      battingLine = `${avg.toFixed(3).replace(/^0/, '')} AVG, ${s.batting.hr} HR, ${s.batting.rbi} RBI`;
-    }
-    let pitchingLine = '—';
-    if (s.pitching && s.pitching.outs > 0) {
-      const era = ((s.pitching.er * 21) / s.pitching.outs).toFixed(2);
-      pitchingLine = `${s.pitching.w}-${s.pitching.l}, ${era} ERA, ${s.pitching.k} K`;
-    }
-    return `<tr><td>Year ${h.year}</td><td>${s.class}</td><td>${battingLine}</td><td>${pitchingLine}</td></tr>`;
-  }).join('');
 
   // Season totals, rolled up from the game log.
   const bt = battingLog.reduce((acc, b) => {
@@ -1285,6 +1536,37 @@ function openPlayerModal(teamName, playerId) {
     const kPer7 = pt.outs > 0 ? ((pt.k * 21) / pt.outs).toFixed(1) : '0.0';
     return `${pt.w}-${pt.l}${pt.sv ? `, ${pt.sv}sv` : ''} · ERA ${era} · WHIP ${whip} · K/7 ${kPer7} · ${outsToIp(pt.outs)} IP`;
   })() : '';
+
+  // Career: one row per year this player recorded stats, in the same
+  // column format as the team's season-stats table, so a player's full
+  // body of work reads like a normal stat sheet rather than a summary
+  // blurb. Past years come from state.history; the in-progress year is
+  // rolled up from the live game log above.
+  const battingLine = (year, cls, b) => {
+    const avg = b.ab > 0 ? b.h / b.ab : 0;
+    const obp = (b.ab + b.bb) > 0 ? (b.h + b.bb) / (b.ab + b.bb) : 0;
+    const tb = b.h + b.doubles + 2 * b.triples + 3 * b.hr;
+    const slg = b.ab > 0 ? tb / b.ab : 0;
+    return `<tr><td>${year}</td><td>${cls}</td><td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td><td>${fmt3(avg)}</td><td>${fmt3(obp)}</td><td>${fmt3(slg)}</td><td>${fmt3(obp + slg)}</td></tr>`;
+  };
+  const pitchingLine = (year, cls, p) => {
+    const era = ((p.er * 21) / p.outs).toFixed(2);
+    const whip = ((p.bb + p.h) / (p.outs / 3)).toFixed(2);
+    const kPer7 = ((p.k * 21) / p.outs).toFixed(1);
+    const oba = (p.outs + p.h) > 0 ? (p.h / (p.outs + p.h)).toFixed(3).replace(/^0/, '') : '.000';
+    return `<tr><td>${year}</td><td>${cls}</td><td>${p.w}-${p.l}</td><td>${outsToIp(p.outs)}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td></tr>`;
+  };
+
+  const careerBattingRows = [];
+  const careerPitchingRows = [];
+  state.history.forEach((h) => {
+    const s = h.playerStats[playerId];
+    if (!s) return;
+    if (s.batting && s.batting.ab > 0) careerBattingRows.push(battingLine(h.year, s.class, s.batting));
+    if (s.pitching && s.pitching.outs > 0) careerPitchingRows.push(pitchingLine(h.year, s.class, s.pitching));
+  });
+  if (bt.ab > 0) careerBattingRows.push(battingLine(state.dynastyYear, primary.class, bt));
+  if (pt.outs > 0) careerPitchingRows.push(pitchingLine(state.dynastyYear, primary.class, pt));
 
   const gameTag = (g) => (g.isPostseason ? 'Postseason' : `wk ${g.week}`);
   const battingLogRows = battingLog.map((b) => `
@@ -1321,15 +1603,23 @@ function openPlayerModal(teamName, playerId) {
       </table>` : ''}
     </div>
 
-    ${careerRows ? `
+    ${careerBattingRows.length > 0 || careerPitchingRows.length > 0 ? `
     <div class="tp-schedule-title">Career</div>
-    <table class="standings-table tp-mini-table">
-      <thead><tr><th>Year</th><th>Class</th><th>Batting</th><th>Pitching</th></tr></thead>
-      <tbody>${careerRows}</tbody>
-    </table>
+    <div class="tp-stacked-tables">
+      ${careerBattingRows.length > 0 ? `
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th>Year</th><th>Cl</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th></tr></thead>
+        <tbody>${careerBattingRows.join('')}</tbody>
+      </table>` : ''}
+      ${careerPitchingRows.length > 0 ? `
+      <table class="standings-table tp-mini-table">
+        <thead><tr><th>Year</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th><th>K/7</th><th>OBA</th></tr></thead>
+        <tbody>${careerPitchingRows.join('')}</tbody>
+      </table>` : ''}
+    </div>
     ` : ''}
 
-    ${battingLog.length > 0 || pitchingLog.length > 0 ? `<p class="tp-team-totals">${[battingSummary, pitchingSummary].filter(Boolean).join(' &nbsp;|&nbsp; ')}</p>` : '<p class="view-note">No games played yet.</p>'}
+    ${careerBattingRows.length === 0 && careerPitchingRows.length === 0 ? '<p class="view-note">No games played yet.</p>' : ''}
 
     <div class="tp-stacked-tables">
       ${battingLog.length > 0 ? `
@@ -1362,7 +1652,6 @@ function conferenceLink(confName) {
 function openConferenceModal(confName) {
   const confTeams = TEAMS.filter((t) => t.conference === confName);
   if (confTeams.length === 0) return;
-  const color = CONFERENCES[confName]?.color || '#0F3324';
 
   const standings = computeStandings(TEAMS, state.games);
   const confStandings = (standingsByConference(standings)[confName] || []);
@@ -1385,10 +1674,17 @@ function openConferenceModal(confName) {
 
   document.getElementById('modalContent').innerHTML = `
     <div class="tp-header">
-      <div class="conf-badge" style="background:${color}">${confName}</div>
+      <div class="tp-badge-wrap">
+        ${confBadge(confName, 56, 'team-badge-lg')}
+        <button class="badge-upload-btn" data-upload-conf="${confName}" title="Upload a logo for ${confName}">⤒</button>
+      </div>
       <div>
         <h2>${confName}</h2>
         <p class="tp-sub">${confTeams.length} teams</p>
+        <p class="tp-logo-actions">
+          <button class="link-btn" data-upload-conf="${confName}">Upload logo</button>
+          ${customConfLogos[confName] ? `· <button class="link-btn" data-reset-logo-conf="${confName}">Reset to default</button>` : ''}
+        </p>
         ${champLine}
       </div>
     </div>
@@ -1797,6 +2093,7 @@ async function init() {
     wireControls();
     wireTeamModal();
     wireLogoUpload();
+    wireArchiveBar();
     renderAll();
   } catch (err) {
     console.error('App failed to start:', err);
