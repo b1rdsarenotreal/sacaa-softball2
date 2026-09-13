@@ -225,6 +225,22 @@ function computeHistoricalPercentiles(teams) {
     .forEach((s, i) => { result[s.name].battingPercentile = n > 1 ? i / (n - 1) : 0.5; });
   [...scored].sort((a, b) => a.pitchingZ - b.pitchingZ)
     .forEach((s, i) => { result[s.name].pitchingPercentile = n > 1 ? i / (n - 1) : 0.5; });
+
+  // A couple of conferences are meant to read as genuinely the weakest in
+  // the league -- even their best program shouldn't land as an Elite,
+  // nationally-elite-caliber team. Cap how high a percentile teams in these
+  // conferences can reach, rescaling proportionally so relative strength
+  // *within* the conference is still preserved (their best team is still
+  // clearly their best team -- it just tops out around "Strong" instead of
+  // "Elite").
+  const CAPPED_CONFERENCE_CEILING = { GNAC: 0.78, PWC: 0.78 };
+  teams.forEach((t) => {
+    const cap = CAPPED_CONFERENCE_CEILING[t.conference];
+    if (cap === undefined) return;
+    result[t.name].battingPercentile *= cap;
+    result[t.name].pitchingPercentile *= cap;
+  });
+
   return result;
 }
 

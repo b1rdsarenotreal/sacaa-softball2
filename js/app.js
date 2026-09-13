@@ -848,6 +848,7 @@ function archiveSeason() {
     teamRecords, teamStats, playerStats, conferenceChamps, nationalChampion,
     postseasonBracket: state.postseason,
     weeks: state.currentSeasonLog.weeks,
+    awards: computeAwards(),
   });
 }
 
@@ -944,6 +945,42 @@ function computeAwards() {
   });
 
   return { national, conferences };
+}
+
+// Scans one season's awards (national + every conference) for every honor
+// a specific player won, for the badge row on their profile. Works for both
+// a past season's archived awards and the current season's live ones,
+// since both come out of computeAwards() in the same shape.
+function findPlayerAwardsInSeason(awards, playerId, year) {
+  if (!awards) return [];
+  const badges = [];
+  const ALL_SLOTS = [...AWARD_POSITIONS, 'P'];
+  if (awards.national.playerOfYear?.playerId === playerId) badges.push({ year, label: 'National Player of the Year' });
+  if (awards.national.pitcherOfYear?.playerId === playerId) badges.push({ year, label: 'National Pitcher of the Year' });
+  if (awards.national.freshmanOfYear?.playerId === playerId) badges.push({ year, label: 'National Freshman of the Year' });
+  ALL_SLOTS.forEach((slot) => {
+    if (awards.national.team[slot]?.playerId === playerId) badges.push({ year, label: `All-American (${slot})` });
+  });
+  Object.entries(awards.conferences).forEach(([conf, data]) => {
+    if (data.playerOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Player of the Year` });
+    if (data.pitcherOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Pitcher of the Year` });
+    if (data.freshmanOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Freshman of the Year` });
+    ALL_SLOTS.forEach((slot) => {
+      if (data.team[slot]?.playerId === playerId) badges.push({ year, label: `All-${conf} (${slot})` });
+    });
+  });
+  return badges;
+}
+
+// Every award badge across a player's whole career: past seasons come from
+// the archived state.history entries; the current season (if any awards
+// are live yet) is passed in already-computed so callers that already need
+// computeAwards() for something else don't pay for it twice.
+function getPlayerAwardBadges(playerId, currentSeasonAwards) {
+  const badges = [];
+  state.history.forEach((h) => { badges.push(...findPlayerAwardsInSeason(h.awards, playerId, h.year)); });
+  if (currentSeasonAwards) badges.push(...findPlayerAwardsInSeason(currentSeasonAwards, playerId, state.dynastyYear));
+  return badges.sort((a, b) => b.year - a.year);
 }
 
 function awardCardHTML(title, player) {
@@ -1866,6 +1903,15 @@ function openPlayerModal(teamName, playerId) {
   const playerWar = leagueStatsForWar.playerBatting.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0)
     + leagueStatsForWar.playerPitching.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0);
 
+  // Award badges: current season's awards only need computing if the
+  // season has actually generated any (games played); past seasons come
+  // straight from the archive.
+  const currentSeasonAwards = state.games.some((g) => g.played) ? computeAwards() : null;
+  const awardBadges = getPlayerAwardBadges(playerId, currentSeasonAwards);
+  const awardBadgesHTML = awardBadges.length > 0
+    ? `<div class="award-badges">${awardBadges.map((a) => `<span class="award-badge" title="${a.year}">🏆 ${a.label} (${a.year})</span>`).join('')}</div>`
+    : '';
+
   // Season totals, rolled up from the game log.
   const bt = battingLog.reduce((acc, b) => {
     acc.ab += b.ab; acc.h += b.h; acc.bb += b.bb; acc.r += b.r; acc.rbi += b.rbi;
@@ -1915,6 +1961,17 @@ function openPlayerModal(teamName, playerId) {
     return `<tr><td>${year}</td><td>${cls}</td><td>${p.w}-${p.l}</td><td>${outsToIp(p.outs)}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td></tr>`;
   };
 
+  const careerBattingSeasons = [];
+  const careerPitchingSeasons = [];
+  state.history.forEach((h) => {
+    const s = h.playerStats[playerId];
+    if (!s) return;
+    if (s.batting && s.batting.ab > 0) careerBattingSeasons.push(s.batting);
+    if (s.pitching && s.pitching.outs > 0) careerPitchingSeasons.push(s.pitching);
+  });
+  if (bt.ab > 0) careerBattingSeasons.push(bt);
+  if (pt.outs > 0) careerPitchingSeasons.push(pt);
+
   const careerBattingRows = [];
   const careerPitchingRows = [];
   state.history.forEach((h) => {
@@ -1925,6 +1982,23 @@ function openPlayerModal(teamName, playerId) {
   });
   if (bt.ab > 0) careerBattingRows.push(battingLine(state.dynastyYear, primary.class, bt));
   if (pt.outs > 0) careerPitchingRows.push(pitchingLine(state.dynastyYear, primary.class, pt));
+
+  // A totals row at the bottom, same as a real career stat sheet -- only
+  // worth showing once there's more than one season to actually total up.
+  const sumSeasons = (seasons, keys) => {
+    const total = {};
+    keys.forEach((k) => { total[k] = 0; });
+    seasons.forEach((s) => keys.forEach((k) => { total[k] += s[k] || 0; }));
+    return total;
+  };
+  if (careerBattingSeasons.length > 1) {
+    const total = sumSeasons(careerBattingSeasons, ['ab', 'h', 'bb', 'r', 'rbi', 'hr', 'doubles', 'triples', 'k']);
+    careerBattingRows.push(battingLine('Career', `${careerBattingSeasons.length} yrs`, total).replace('<tr>', '<tr class="career-total-row">'));
+  }
+  if (careerPitchingSeasons.length > 1) {
+    const total = sumSeasons(careerPitchingSeasons, ['outs', 'h', 'er', 'bb', 'k', 'w', 'l', 'sv']);
+    careerPitchingRows.push(pitchingLine('Career', `${careerPitchingSeasons.length} yrs`, total).replace('<tr>', '<tr class="career-total-row">'));
+  }
 
   const gameTag = (g) => (g.isPostseason ? 'Postseason' : `wk ${g.week}`);
   const battingLogRows = battingLog.map((b) => `
@@ -1945,6 +2019,7 @@ function openPlayerModal(teamName, playerId) {
         <h2>#${primary.number} ${primary.name}${isTwoWay ? ' <span class="two-way-tag">TW</span>' : ''}</h2>
         <p class="tp-sub">${primary.class} · ${roleLabel} · ${teamLink(teamName)}</p>
         <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate)</span></p>
+        ${awardBadgesHTML}
       </div>
     </div>
 

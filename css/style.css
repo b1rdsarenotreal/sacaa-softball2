@@ -992,6 +992,24 @@ main {
   margin-top: 2px;
 }
 
+.award-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.award-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--clay-dark);
+  background: #FDF3E7;
+  border: 1px solid #EAD3AE;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
 .tp-schedule-title {
   font-family: var(--font-display);
   font-weight: 700;
@@ -1053,6 +1071,12 @@ main {
   white-space: nowrap;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
+}
+
+.career-total-row {
+  font-weight: 700;
+  background: var(--chalk);
+  border-top: 2px solid var(--line);
 }
 
 .two-way-tag {
