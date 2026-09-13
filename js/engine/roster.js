@@ -9,6 +9,27 @@
 // quality (from teams.json) so team strength is preserved, with individual
 // variance layered on top.
 
+// A dedicated Hawaiian/Pacific Islander name pool, drawn on more heavily
+// for recruits from Hawaii and, to a lesser degree, SoCal (see
+// randomNameForRegion) -- both have real, sizable Pacific Islander
+// populations, and it's a nice bit of regional texture for recruiting.
+const HAWAIIAN_FIRST_NAMES = [
+  'Kailani', 'Leilani', 'Malia', 'Nalani', 'Kalea', 'Puanani', 'Alohi',
+  'Moana', 'Noelani', 'Kiana', 'Leimomi', 'Kalani', 'Kamea', 'Lani',
+  'Maluhia', 'Hoku', 'Anuhea', 'Kealoha', 'Mahina', 'Makana', 'Ualani',
+  'Leinaala', 'Kaiulani', 'Halia', 'Iolana', 'Keahi', 'Lehua', 'Nohea',
+  'Onaona', 'Kanoe', 'Haunani', 'Pua', 'Kaila', 'Alakai', 'Kaimana',
+  'Momi', 'Kealohi', 'Leia', 'Lokelani', 'Melia',
+];
+const HAWAIIAN_LAST_NAMES = [
+  'Kahale', 'Akana', 'Kalama', 'Makaiwi', 'Pahulu', 'Kanahele', 'Naeole',
+  'Kaeo', 'Kalua', 'Kanoa', 'Kahiapo', 'Naki', 'Aki', 'Puou', 'Kahiwa',
+  'Kama', 'Kaipo', 'Alama', 'Kanuha', 'Kahoano', 'Naipo', 'Kekona',
+  'Kalauli', 'Awai', 'Kanekoa', 'Kahananui', 'Fonoti', 'Tuilagi',
+  'Mahelona', 'Tuiasosopo', 'Faleolo', 'Iosefa', 'Kahale', 'Manu',
+  'Tupou', 'Vaipulu', 'Malietoa', 'Leota',
+];
+
 const FIRST_NAMES = [
   'Maddie', 'Sophia', 'Ava', 'Riley', 'Emma', 'Olivia', 'Mia', 'Grace',
   'Harper', 'Ella', 'Chloe', 'Layla', 'Zoe', 'Lily', 'Addison', 'Aubrey',
@@ -39,6 +60,27 @@ const FIRST_NAMES = [
   'Renata', 'Rosa', 'Sofia', 'Ximena', 'Yolanda', 'Yuki', 'Aiko',
   'Akemi', 'Emiko', 'Hana', 'Haruka', 'Kaori', 'Mei', 'Nari', 'Suki',
   'Yuna', 'Yumi', 'Haeun', 'Jia', 'Mina', 'Seoyeon', 'Sooah',
+  // Expanded pool
+  'Adalyn', 'Alina', 'Alondra', 'Amara', 'Amaya', 'Andrea', 'Angelina',
+  'Anika', 'Annabelle', 'Arabella', 'Ariana', 'Arianna', 'Ariel', 'Arya',
+  'Ashley', 'Aspen', 'Athena', 'Aurora', 'Belen', 'Bethany', 'Blakely',
+  'Breanna', 'Britt', 'Callie', 'Carly', 'Carolina', 'Cassidy', 'Cecilia',
+  'Charley', 'Clara', 'Colette', 'Daniela', 'Daphne', 'Dayana', 'Deja',
+  'Dulcinea', 'Eliza', 'Elsie', 'Emersyn', 'Emmeline', 'Estella', 'Estrella',
+  'Evangeline', 'Evie', 'Ezri', 'Frida', 'Gia', 'Greta', 'Harmony',
+  'Haven', 'Heidi', 'Holland', 'Honor', 'Ida', 'Imani', 'India',
+  'Iris', 'Jayla', 'Jolie', 'Josephine', 'Journee', 'Juniper', 'Justice',
+  'Kaia', 'Kali', 'Karina', 'Karsyn', 'Katalina', 'Kensley', 'Khloe',
+  'Kimber', 'Kyla', 'Laila', 'Lainey', 'Lana', 'Landry', 'Laurel',
+  'Leighton', 'Liana', 'Lillian', 'Lilliana', 'Lola', 'Lorelei', 'Lyla',
+  'Mabel', 'Macy', 'Magnolia', 'Malaysia', 'Mariana', 'Marina', 'Maylee',
+  'Meadow', 'Mercy', 'Milan', 'Miriam', 'Mya', 'Nadia', 'Nala',
+  'Nevada', 'Novalee', 'Oaklynn', 'Olive', 'Paislee', 'Paloma', 'Pearl',
+  'Perla', 'Phoenix', 'Poppy', 'Remi', 'Rory', 'Rosalie', 'Rosemary',
+  'Roslyn', 'Rylee', 'Salma', 'Selena', 'Serena', 'Serenity', 'Shiloh',
+  'Simone', 'Sloane', 'Stella', 'Story', 'Sutton', 'Talia', 'Teagan',
+  'Thea', 'Valeria', 'Valery', 'Vivian', 'Wren', 'Wrenley', 'Yara',
+  'Zaria', 'Zaylee', 'Zelda', 'Zion',
 ];
 
 const LAST_NAMES = [
@@ -111,6 +153,35 @@ const LAST_NAMES = [
   'Lee', 'Wong', 'Chen', 'Chang', 'Liu', 'Huang', 'Wu', 'Tran', 'Pham',
   'Le', 'Vo', 'Bui', 'Fonoti', 'Tuilagi', 'Mahelona', 'Tuiasosopo',
   'Faleolo', 'Iosefa', 'Kalani', 'Kahale', 'Manu', 'Tupou', 'Vaipulu',
+  // Expanded pool
+  'Abbott', 'Acosta', 'Aguirre', 'Ahn', 'Albright', 'Allison', 'Amaya',
+  'Ambrose', 'Anaya', 'Anders', 'Archer', 'Ashford', 'Atkins', 'Aviles',
+  'Bahena', 'Bancroft', 'Barajas', 'Barrera', 'Bautista', 'Beltran', 'Benitez',
+  'Blackwood', 'Blevins', 'Booker', 'Bravo', 'Briones', 'Bui', 'Burch',
+  'Camacho', 'Cardona', 'Carrillo', 'Case', 'Cha', 'Chau', 'Cho',
+  'Cisneros', 'Colon', 'Cordova', 'Cortez', 'Covington', 'Crane', 'Cuevas',
+  'Dao', 'Deleon', 'Denton', 'Dinh', 'Doan', 'Dominguez', 'Duarte',
+  'Duong', 'Elmore', 'Enriquez', 'Escamilla', 'Estrada', 'Feliciano', 'Figueroa',
+  'Frost', 'Fuentes', 'Galindo', 'Galvan', 'Gallegos', 'Gamboa', 'Godinez',
+  'Golden', 'Gould', 'Guerra', 'Guerrero', 'Gushiken', 'Ha', 'Haddad',
+  'Hagerty', 'Hironaka', 'Ho', 'Hoang', 'Holbrook', 'Hollis', 'Huerta',
+  'Inoue', 'Ishida', 'Ishikawa', 'Juarez', 'Kagawa', 'Kaneko', 'Kanno',
+  'Katayama', 'Kawamoto', 'Keo', 'Koga', 'Lac', 'Lai', 'Lam',
+  'Lara', 'Leija', 'Leung', 'Liang', 'Limon', 'Loera', 'Luna',
+  'Macias', 'Madrigal', 'Magana', 'Maki', 'Marin', 'Marquez', 'Mata',
+  'Matsuda', 'Matsumoto', 'Medrano', 'Meraz', 'Mercado', 'Miura', 'Miyake',
+  'Miyamoto', 'Molina', 'Monroe', 'Moya', 'Munguia', 'Murakami', 'Nakagawa',
+  'Nakashima', 'Nakayama', 'Nishimura', 'Nishioka', 'Noriega', 'Ocampo', 'Ochoa',
+  'Ohara', 'Okada', 'Okamoto', 'Okumura', 'Olivares', 'Oshiro', 'Padilla',
+  'Palacios', 'Pantoja', 'Pinedo', 'Plascencia', 'Portillo', 'Preciado', 'Puente',
+  'Quezada', 'Quintero', 'Ramon', 'Rangel', 'Rasmussen', 'Retana', 'Rico',
+  'Rincon', 'Rios', 'Rocha', 'Rubio', 'Saechao', 'Salgado', 'Sanchez',
+  'Sandoval', 'Segura', 'Serrano', 'Shibata', 'Shimizu', 'Solano', 'Solorzano',
+  'Sosa', 'Sotelo', 'Tafoya', 'Takagi', 'Takahashi', 'Takeda', 'Tapia',
+  'Tejeda', 'Thai', 'Tinoco', 'Tolentino', 'Trinh', 'Truong', 'Uribe',
+  'Valadez', 'Valencia', 'Valenzuela', 'Van', 'Vazquez', 'Velasco', 'Velazquez',
+  'Villanueva', 'Villegas', 'Vu', 'Wakamatsu', 'Yamada', 'Yamaguchi', 'Yasuda',
+  'Zamudio', 'Zavala', 'Zepeda', 'Zuniga',
 ];
 
 const POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DP'];
@@ -147,6 +218,38 @@ export function randomName(rng, used) {
   do {
     const first = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
     const last = LAST_NAMES[Math.floor(rng() * LAST_NAMES.length)];
+    name = `${first} ${last}`;
+    guard += 1;
+  } while (used.has(name) && guard < 30);
+  used.add(name);
+  return name;
+}
+
+// How often a Hawaiian/Pacific Islander-style name gets drawn for a recruit
+// from each region -- Hawaii itself draws heavily from that pool, SoCal
+// (a real, sizable Pacific Islander population) draws noticeably more than
+// the rest of the mainland, and everywhere else gets a small baseline
+// rate rather than zero.
+const HAWAIIAN_NAME_RATE_BY_REGION = {
+  Hawaii: 0.65,
+  SoCal: 0.12,
+  BayArea: 0.06,
+  Nevada: 0.05,
+  CentralValley: 0.04,
+  PacificNW: 0.05,
+  Arizona: 0.03,
+};
+
+export function randomNameForRegion(rng, used, region) {
+  const hawaiianRate = HAWAIIAN_NAME_RATE_BY_REGION[region] ?? 0.05;
+  const useHawaiian = rng() < hawaiianRate;
+  const firstPool = useHawaiian ? HAWAIIAN_FIRST_NAMES : FIRST_NAMES;
+  const lastPool = useHawaiian ? HAWAIIAN_LAST_NAMES : LAST_NAMES;
+  let name;
+  let guard = 0;
+  do {
+    const first = firstPool[Math.floor(rng() * firstPool.length)];
+    const last = lastPool[Math.floor(rng() * lastPool.length)];
     name = `${first} ${last}`;
     guard += 1;
   } while (used.has(name) && guard < 30);

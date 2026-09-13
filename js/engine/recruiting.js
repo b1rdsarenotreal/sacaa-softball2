@@ -9,7 +9,7 @@
 // roster.js's advanceRosterOneSeason), so a team that recruits well gets
 // genuinely better over time, and a team that recruits poorly slides.
 
-import { mulberry32, randomName, TALENT_MIN, TALENT_RANGE } from './roster.js';
+import { mulberry32, randomNameForRegion, TALENT_MIN, TALENT_RANGE } from './roster.js';
 
 // --- Geography -------------------------------------------------------
 // Seven rough regions covering the league's real-world-inspired locations.
@@ -76,7 +76,7 @@ export function generateRecruitClass(teams, seed, count) {
     const specialty = roll < 0.42 ? 'hitting' : roll < 0.84 ? 'pitching' : 'twoWay';
     recruits.push({
       id: `recruit-${seed}-${i}`,
-      name: randomName(rng, usedNames),
+      name: randomNameForRegion(rng, usedNames, region),
       region,
       specialty,
       stars: rollStars(rng),

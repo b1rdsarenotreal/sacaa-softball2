@@ -268,7 +268,7 @@ function freshState(seed) {
   return {
     schemaVersion: SCHEMA_VERSION,
     seed,
-    dynastyYear: 2013,
+    dynastyYear: 2030,
     history: [],
     lastHomeMap: schedule.homeMap,
     currentSeasonLog: { weeks: [] },
@@ -929,7 +929,7 @@ function archiveSeason() {
 
   const teamRecords = {};
   standings.forEach((r) => {
-    teamRecords[r.name] = { wins: r.wins, losses: r.losses, confWins: r.confWins, confLosses: r.confLosses, conference: r.conference };
+    teamRecords[r.name] = { wins: r.wins, losses: r.losses, confWins: r.confWins, confLosses: r.confLosses, conference: r.conference, runDiff: r.runDiff };
   });
 
   const teamStats = {};
@@ -939,13 +939,13 @@ function archiveSeason() {
 
   const playerStats = {};
   playerBatting.forEach((p) => {
-    if (!playerStats[p.playerId]) playerStats[p.playerId] = { name: p.name, number: p.number, team: p.team, class: p.class };
+    if (!playerStats[p.playerId]) playerStats[p.playerId] = { playerId: p.playerId, name: p.name, number: p.number, team: p.team, class: p.class, twoWay: p.twoWay };
     playerStats[p.playerId].batting = {
-      ab: p.ab, h: p.h, bb: p.bb, r: p.r, rbi: p.rbi, hr: p.hr, doubles: p.doubles, triples: p.triples, k: p.k,
+      ab: p.ab, h: p.h, bb: p.bb, r: p.r, rbi: p.rbi, hr: p.hr, doubles: p.doubles, triples: p.triples, k: p.k, position: p.position,
     };
   });
   playerPitching.forEach((p) => {
-    if (!playerStats[p.playerId]) playerStats[p.playerId] = { name: p.name, number: p.number, team: p.team, class: p.class };
+    if (!playerStats[p.playerId]) playerStats[p.playerId] = { playerId: p.playerId, name: p.name, number: p.number, team: p.team, class: p.class, twoWay: p.twoWay };
     playerStats[p.playerId].pitching = { outs: p.outs, h: p.h, er: p.er, bb: p.bb, k: p.k, w: p.w, l: p.l, sv: p.sv };
   });
 
@@ -962,6 +962,7 @@ function archiveSeason() {
     postseasonBracket: state.postseason,
     weeks: state.currentSeasonLog.weeks,
     awards: computeAwards(),
+    games: state.games,
   });
 }
 
@@ -1150,6 +1151,43 @@ function renderRecruiting() {
   banner.className = 'champion-banner';
   banner.innerHTML = `<span>Recruiting: ${stageNote}</span>`;
   container.appendChild(banner);
+
+  if (stage === 'signed') {
+    const scoreByTeam = {};
+    TEAMS.forEach((t) => { scoreByTeam[t.name] = { points: 0, count: 0 }; });
+    state.recruiting.recruits.forEach((r) => {
+      if (!r.signedWith) return;
+      scoreByTeam[r.signedWith].points += r.stars;
+      scoreByTeam[r.signedWith].count += 1;
+    });
+    const ranked = TEAMS
+      .map((t) => ({ name: t.name, ...scoreByTeam[t.name] }))
+      .filter((t) => t.count > 0)
+      .sort((a, b) => b.points - a.points)
+      .slice(0, 25);
+
+    const rankSection = document.createElement('div');
+    rankSection.className = 'bracket-section';
+    rankSection.innerHTML = '<h3>Recruiting Class Rankings <span class="view-note">total points = sum of signed recruits\' star ratings (5 stars = 5 pts, 4 = 4 pts, etc.)</span></h3>';
+    const rankTable = document.createElement('table');
+    rankTable.className = 'standings-table';
+    rankTable.style.width = '100%';
+    rankTable.innerHTML = '<thead><tr><th>Rank</th><th>Team</th><th>Signees</th><th>Points</th><th>Avg Stars</th></tr></thead>';
+    const rankBody = document.createElement('tbody');
+    ranked.forEach((t, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${i + 1}</td><td>${teamLink(t.name)}</td><td>${t.count}</td><td>${t.points}</td><td>${(t.points / t.count).toFixed(1)}</td>`;
+      rankBody.appendChild(tr);
+    });
+    rankTable.appendChild(rankBody);
+    rankSection.appendChild(rankTable);
+    container.appendChild(rankSection);
+
+    const boardTitle = document.createElement('div');
+    boardTitle.className = 'tp-schedule-title';
+    boardTitle.textContent = 'Recruit Board';
+    container.appendChild(boardTitle);
+  }
 
   let recruits = state.recruiting.recruits;
   if (teamFilter !== 'all') {
@@ -1738,6 +1776,8 @@ function renderSchedule() {
     return;
   }
 
+  const weekRanks = pollRanksForWeek(selectedWeek);
+
   weekGames.forEach((g) => {
     const row = document.createElement('div');
     row.className = 'game-row' + (g.played ? ' played' : '') + (g.conferenceGame ? ' conference-game' : '');
@@ -1751,7 +1791,7 @@ function renderSchedule() {
 
     const awayDiv = document.createElement('div');
     awayDiv.className = 'game-team' + (awayWon ? ' winner' : '');
-    awayDiv.innerHTML = `${teamLink(g.away)}<span class="game-score">${g.played ? g.result.awayScore : ''}</span>`;
+    awayDiv.innerHTML = `${teamLink(g.away, { rank: weekRanks[g.away] })}<span class="game-score">${g.played ? g.result.awayScore : ''}</span>`;
 
     const vs = document.createElement('div');
     vs.className = 'game-vs';
@@ -1759,7 +1799,7 @@ function renderSchedule() {
 
     const homeDiv = document.createElement('div');
     homeDiv.className = 'game-team' + (homeWon ? ' winner' : '');
-    homeDiv.innerHTML = `${teamLink(g.home)}<span class="game-score">${g.played ? g.result.homeScore : ''}</span>`;
+    homeDiv.innerHTML = `${teamLink(g.home, { rank: weekRanks[g.home] })}<span class="game-score">${g.played ? g.result.homeScore : ''}</span>`;
 
     const tag = document.createElement('div');
     tag.className = 'game-tag';
@@ -1808,7 +1848,7 @@ function renderStandings() {
       rows.forEach((r) => {
         const tr = document.createElement('tr');
         const rd = r.runDiff > 0 ? `+${r.runDiff}` : `${r.runDiff}`;
-        tr.innerHTML = `<td>${teamLink(r.name)}</td><td>${r.confWins}-${r.confLosses}</td><td>${r.wins}-${r.losses}</td><td>${rd}</td>`;
+        tr.innerHTML = `<td>${teamLink(r.name, { showRank: true })}</td><td>${r.confWins}-${r.confLosses}</td><td>${r.wins}-${r.losses}</td><td>${rd}</td>`;
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -1876,10 +1916,21 @@ function seedTag(seed) {
   return seed !== undefined ? `<span class="seed-tag">${seed}</span>` : '';
 }
 
-function matchCardHTML(m, prefix) {
+// badgeMode: 'seed' shows tournament seed (national tournament -- regionals,
+// World Series), 'rank' shows Coaches Poll rank (conference tournaments),
+// 'none' shows neither (default).
+function matchCardHTML(m, prefix, badgeMode = 'none') {
+  const badgeFor = (team) => {
+    if (badgeMode === 'seed') return seedTag(team.seed);
+    if (badgeMode === 'rank') {
+      const rank = currentPollRanks[team.name];
+      return rank ? `<span class="rank-badge" title="#${rank} in the Coaches Poll">#${rank}</span>` : '';
+    }
+    return '';
+  };
   if (!m.a || !m.b) {
     const solo = m.a || m.b;
-    return `<div class="bmatch-prefix">${prefix || ''}</div><div class="bmatch-row bmatch-bye">${solo ? `${seedTag(solo.seed)}${teamBadge(solo.name, 18)}${teamLink(solo.name, { noBadge: true })}` : 'TBD'}<span class="bmatch-bye-tag">${solo ? 'bye' : ''}</span></div>`;
+    return `<div class="bmatch-prefix">${prefix || ''}</div><div class="bmatch-row bmatch-bye">${solo ? `${badgeFor(solo)}${teamBadge(solo.name, 18)}${teamLink(solo.name, { noBadge: true })}` : 'TBD'}<span class="bmatch-bye-tag">${solo ? 'bye' : ''}</span></div>`;
   }
   const aWin = m.winner?.name === m.a.name;
   let aScore = '';
@@ -1893,17 +1944,17 @@ function matchCardHTML(m, prefix) {
   }
   return `
     ${prefix ? `<div class="bmatch-prefix">${prefix}</div>` : ''}
-    <div class="bmatch-row ${aWin ? 'winner' : ''}">${seedTag(m.a.seed)}${teamBadge(m.a.name, 18)}<span class="bmatch-name">${teamLink(m.a.name, { noBadge: true })}</span><span class="bmatch-score">${aScore}</span></div>
-    <div class="bmatch-row ${!aWin ? 'winner' : ''}">${seedTag(m.b.seed)}${teamBadge(m.b.name, 18)}<span class="bmatch-name">${teamLink(m.b.name, { noBadge: true })}</span><span class="bmatch-score">${bScore}</span></div>
+    <div class="bmatch-row ${aWin ? 'winner' : ''}">${badgeFor(m.a)}${teamBadge(m.a.name, 18)}<span class="bmatch-name">${teamLink(m.a.name, { noBadge: true })}</span><span class="bmatch-score">${aScore}</span></div>
+    <div class="bmatch-row ${!aWin ? 'winner' : ''}">${badgeFor(m.b)}${teamBadge(m.b.name, 18)}<span class="bmatch-name">${teamLink(m.b.name, { noBadge: true })}</span><span class="bmatch-score">${bScore}</span></div>
   `;
 }
 
 // Builds one match card, wiring it up to reopen its box score (regenerated
 // on demand -- see getPostseasonFull) if it's a real, playable match.
-function buildMatchCard(m, path, prefix, clickable = true) {
+function buildMatchCard(m, path, prefix, clickable = true, badgeMode = 'none') {
   const card = document.createElement('div');
   card.className = 'bmatch';
-  card.innerHTML = matchCardHTML(m, prefix);
+  card.innerHTML = matchCardHTML(m, prefix, badgeMode);
   if (m.a && m.b && clickable) {
     card.classList.add('bmatch-clickable');
     card.dataset.psPath = JSON.stringify(path);
@@ -1919,7 +1970,7 @@ function buildMatchCard(m, path, prefix, clickable = true) {
 // `clickable` is false when browsing a past dynasty year's archived
 // bracket -- box scores for those aren't regenerable (see the comment on
 // getArchivePostseasonBracket), so those matches are shown but inert.
-function renderBracketTree(rounds, roundLabels, pathPrefix, clickable = true) {
+function renderBracketTree(rounds, roundLabels, pathPrefix, clickable = true, badgeMode = 'none') {
   const tree = document.createElement('div');
   tree.className = 'bracket-tree';
   rounds.forEach((round, i) => {
@@ -1933,7 +1984,7 @@ function renderBracketTree(rounds, roundLabels, pathPrefix, clickable = true) {
     const matchesWrap = document.createElement('div');
     matchesWrap.className = 'bracket-col-matches';
     round.forEach((m, j) => {
-      matchesWrap.appendChild(buildMatchCard(m, [...pathPrefix, i, j], null, clickable));
+      matchesWrap.appendChild(buildMatchCard(m, [...pathPrefix, i, j], null, clickable, badgeMode));
     });
     col.appendChild(matchesWrap);
     tree.appendChild(col);
@@ -2007,7 +2058,7 @@ function renderPostseason() {
     const confSection = document.createElement('div');
     confSection.className = 'bracket-section';
     confSection.innerHTML = `<h3>${ct.conference} Tournament ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3><div class="conf-champ-line">Champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
-    confSection.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', i, 'rounds'], clickable));
+    confSection.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', i, 'rounds'], clickable, 'rank'));
     panel.appendChild(confSection);
     tabsWrap.appendChild(panel);
   });
@@ -2042,7 +2093,7 @@ function renderPostseason() {
     const regGrid = document.createElement('div');
     regGrid.className = 'bracket-grid regionals-grid';
     regionals.forEach((m, i) => {
-      regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
+      regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable, 'seed'));
     });
     regSection.appendChild(regGrid);
     nationalPanel.appendChild(regSection);
@@ -2060,7 +2111,7 @@ function renderPostseason() {
     worldSeriesPreview.forEach((m) => {
       const card = document.createElement('div');
       card.className = 'bmatch';
-      card.innerHTML = matchCardHTML(m);
+      card.innerHTML = matchCardHTML(m, null, 'seed');
       previewGrid.appendChild(card);
     });
     previewSection.appendChild(previewGrid);
@@ -2076,13 +2127,13 @@ function renderPostseason() {
     wbLabel.className = 'ws-bracket-label';
     wbLabel.textContent = "Winners' Bracket";
     wsSection.appendChild(wbLabel);
-    wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket'], clickable));
+    wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket'], clickable, 'seed'));
 
     const lbLabel = document.createElement('div');
     lbLabel.className = 'ws-bracket-label';
     lbLabel.textContent = "Losers' Bracket";
     wsSection.appendChild(lbLabel);
-    wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket'], clickable));
+    wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket'], clickable, 'seed'));
 
     const gfLabel = document.createElement('div');
     gfLabel.className = 'ws-bracket-label';
@@ -2090,9 +2141,9 @@ function renderPostseason() {
     wsSection.appendChild(gfLabel);
     const gfGrid = document.createElement('div');
     gfGrid.className = 'bracket-grid';
-    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1', clickable));
+    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1', clickable, 'seed'));
     if (worldSeries.grandFinal.game2) {
-      gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable));
+      gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable, 'seed'));
     }
     wsSection.appendChild(gfGrid);
     nationalPanel.appendChild(wsSection);
@@ -2185,9 +2236,35 @@ function ensurePreseasonPoll() {
 function teamLink(name, opts = {}) {
   const size = opts.size || 20;
   const badge = opts.noBadge ? '' : teamBadge(name, size);
-  const rank = currentPollRanks[name];
+  const rank = opts.rank !== undefined ? opts.rank : (opts.showRank ? currentPollRanks[name] : undefined);
   const rankBadge = rank ? `<span class="rank-badge" title="#${rank} in the Coaches Poll">#${rank}</span>` : '';
   return `<span class="team-link" data-team="${name}">${badge}${rankBadge}<span class="team-link-name">${name}</span></span>`;
+}
+
+// The poll as it stood after a specific week, for the Schedule tab -- a
+// team's rank badge there should reflect what the poll actually said that
+// week, not retroactively show today's rank on last month's games. Falls
+// back to the most recent earlier snapshot for a future/unplayed week, and
+// to the preseason poll if nothing's been simulated yet at all.
+function pollRanksForWeek(week) {
+  const weeks = archiveFilter.year === 'current'
+    ? state.currentSeasonLog.weeks
+    : (state.history.find((h) => h.year === archiveFilter.year)?.weeks || []);
+  const ranks = {};
+  const exact = weeks.find((w) => w.week === week);
+  if (exact) {
+    exact.coachesPoll.forEach((r) => { ranks[r.name] = r.rank; });
+    return ranks;
+  }
+  const priorWeeks = weeks.filter((w) => w.week < week).sort((a, b) => b.week - a.week);
+  if (priorWeeks.length > 0) {
+    priorWeeks[0].coachesPoll.forEach((r) => { ranks[r.name] = r.rank; });
+    return ranks;
+  }
+  if (archiveFilter.year === 'current') {
+    (state.preseasonPoll || []).forEach((r) => { ranks[r.name] = r.rank; });
+  }
+  return ranks;
 }
 
 function playerLink(teamName, playerId, displayName) {
@@ -2456,10 +2533,116 @@ function openTeamModal(name) {
   const team = TEAMS_BY_NAME[name];
   if (!team) return;
 
-  const standings = computeStandings(TEAMS, allCountedGames());
-  const row = standings.find((r) => r.name === name) || {
-    wins: 0, losses: 0, confWins: 0, confLosses: 0, runDiff: 0,
-  };
+  const isCurrent = archiveFilter.year === 'current';
+  const archivedYear = isCurrent ? null : state.history.find((h) => h.year === archiveFilter.year);
+
+  let row;
+  let games;
+  let teamTotals;
+  let battingRows;
+  let pitchingRows;
+  let rosterHitterRows = '';
+  let rosterPitcherRows = '';
+  let rosterUniqueCount = 0;
+  let hasRoster = false;
+  const fmt3 = (x) => x.toFixed(3).replace(/^0/, '');
+
+  if (isCurrent) {
+    const standings = computeStandings(TEAMS, allCountedGames());
+    row = standings.find((r) => r.name === name) || { wins: 0, losses: 0, confWins: 0, confLosses: 0, runDiff: 0 };
+
+    games = state.games
+      .filter((g) => g.home === name || g.away === name)
+      .sort((a, b) => a.week - b.week || a.gameOfSeries - b.gameOfSeries);
+
+    const seasonStats = computeSeasonStatsForTeam(name);
+    teamTotals = teamTotalsFromSeasonStats(seasonStats);
+
+    battingRows = seasonStats.batting.map((b) => {
+      const avg = b.ab > 0 ? b.h / b.ab : 0;
+      const obp = (b.ab + b.bb) > 0 ? (b.h + b.bb) / (b.ab + b.bb) : 0;
+      const totalBases = b.h + b.doubles + 2 * b.triples + 3 * b.hr;
+      const slg = b.ab > 0 ? totalBases / b.ab : 0;
+      return `
+      <tr>
+        <td>#${b.number}</td><td>${playerLink(name, b.playerId, b.name)}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
+        <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
+        <td>${fmt3(avg)}</td><td>${fmt3(obp)}</td><td>${fmt3(slg)}</td><td>${fmt3(obp + slg)}</td>
+      </tr>`;
+    }).join('');
+
+    pitchingRows = seasonStats.pitching.map((p) => {
+      const ip = outsToIp(p.outs);
+      const era = p.outs > 0 ? ((p.er * 21) / p.outs).toFixed(2) : '0.00';
+      const whip = p.outs > 0 ? ((p.bb + p.h) / (p.outs / 3)).toFixed(2) : '0.00';
+      const kPer7 = p.outs > 0 ? ((p.k * 21) / p.outs).toFixed(1) : '0.0';
+      const oba = (p.outs + p.h) > 0 ? (p.h / (p.outs + p.h)).toFixed(3).replace(/^0/, '') : '.000';
+      return `
+      <tr>
+        <td>#${p.number}</td><td>${p.role} ${playerLink(name, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
+        <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td>
+      </tr>`;
+    }).join('');
+
+    // Full 25-man roster (independent of whether they've recorded a stat
+    // line yet) -- lineup + bench hitters, then the full pitching staff.
+    const roster = state.rosters[name];
+    hasRoster = true;
+    rosterHitterRows = [...roster.lineup, ...roster.bench].map((p) => `
+      <tr>
+        <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
+        <td>${p.ratings.contact}</td><td>${p.ratings.power}</td><td>${p.ratings.eye}</td>
+      </tr>`).join('');
+    rosterPitcherRows = roster.pitchers.map((p) => `
+      <tr>
+        <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
+        <td>${p.ratings.stuff}</td><td>${p.ratings.control}</td><td>${p.ratings.movement}</td>
+      </tr>`).join('');
+    rosterUniqueCount = new Set([
+      ...roster.lineup.map((p) => p.id),
+      ...roster.bench.map((p) => p.id),
+      ...roster.pitchers.map((p) => p.id),
+    ]).size;
+  } else {
+    // Browsing a past archived year: everything comes from that year's
+    // history entry instead of live state. Detailed roster ratings aren't
+    // retained for past years (only season stats), so the Roster tab shows
+    // a note pointing to Stats instead.
+    const rec = (archivedYear && archivedYear.teamRecords[name]) || { wins: 0, losses: 0, confWins: 0, confLosses: 0, runDiff: 0 };
+    row = rec;
+    games = ((archivedYear && archivedYear.games) || [])
+      .filter((g) => g.home === name || g.away === name)
+      .sort((a, b) => a.week - b.week || a.gameOfSeries - b.gameOfSeries);
+    teamTotals = (archivedYear && archivedYear.teamStats[name]) || { avg: 0, obp: 0, slg: 0, era: 0, whip: 0 };
+
+    const teamPlayers = archivedYear ? Object.values(archivedYear.playerStats).filter((p) => p.team === name) : [];
+    battingRows = teamPlayers.filter((p) => p.batting && p.batting.ab > 0).map((p) => {
+      const b = p.batting;
+      const avg = b.ab > 0 ? b.h / b.ab : 0;
+      const obp = (b.ab + b.bb) > 0 ? (b.h + b.bb) / (b.ab + b.bb) : 0;
+      const totalBases = b.h + b.doubles + 2 * b.triples + 3 * b.hr;
+      const slg = b.ab > 0 ? totalBases / b.ab : 0;
+      return `
+      <tr>
+        <td>#${p.number}</td><td>${playerLink(name, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${b.position || '—'}</td>
+        <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
+        <td>${fmt3(avg)}</td><td>${fmt3(obp)}</td><td>${fmt3(slg)}</td><td>${fmt3(obp + slg)}</td>
+      </tr>`;
+    }).join('');
+    pitchingRows = teamPlayers.filter((p) => p.pitching && p.pitching.outs > 0).map((p) => {
+      const pt = p.pitching;
+      const ip = outsToIp(pt.outs);
+      const era = pt.outs > 0 ? ((pt.er * 21) / pt.outs).toFixed(2) : '0.00';
+      const whip = pt.outs > 0 ? ((pt.bb + pt.h) / (pt.outs / 3)).toFixed(2) : '0.00';
+      const kPer7 = pt.outs > 0 ? ((pt.k * 21) / pt.outs).toFixed(1) : '0.0';
+      const oba = (pt.outs + pt.h) > 0 ? (pt.h / (pt.outs + pt.h)).toFixed(3).replace(/^0/, '') : '.000';
+      return `
+      <tr>
+        <td>#${p.number}</td><td>${playerLink(name, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${pt.w}-${pt.l}${pt.sv ? `, ${pt.sv}sv` : ''}</td>
+        <td>${ip}</td><td>${pt.h}</td><td>${pt.er}</td><td>${pt.bb}</td><td>${pt.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td>
+      </tr>`;
+    }).join('');
+  }
 
   // Dynasty history: past seasons' records for this team, and the coach's
   // cumulative record across the whole dynasty (including the season in
@@ -2480,10 +2663,6 @@ function openTeamModal(name) {
     return `<tr><td>Year ${h.year}</td><td>${h.record.wins}-${h.record.losses}</td><td>${h.record.confWins}-${h.record.confLosses}</td><td>${postseasonNote}</td></tr>`;
   }).join('');
 
-  const games = state.games
-    .filter((g) => g.home === name || g.away === name)
-    .sort((a, b) => a.week - b.week || a.gameOfSeries - b.gameOfSeries);
-
   const gameRows = games.map((g) => {
     const isHome = g.home === name;
     const opponent = isHome ? g.away : g.home;
@@ -2501,7 +2680,7 @@ function openTeamModal(name) {
     const oppScore = isHome ? g.result.awayScore : g.result.homeScore;
     const won = ownScore > oppScore;
     return `
-      <div class="tp-game-row tp-game-row-clickable" data-boxscore-game="${g.id}">
+      <div class="tp-game-row${isCurrent ? ' tp-game-row-clickable' : ''}"${isCurrent ? ` data-boxscore-game="${g.id}"` : ''}>
         <span class="tp-wk">wk ${g.week}</span>
         <span>${atVs} ${teamLink(opponent)}</span>
         <span class="tp-score"><span class="${won ? 'tp-result-w' : 'tp-result-l'}">${won ? 'W' : 'L'}</span> ${ownScore}-${oppScore}</span>
@@ -2510,55 +2689,6 @@ function openTeamModal(name) {
   }).join('');
 
   const rd = row.runDiff > 0 ? `+${row.runDiff}` : `${row.runDiff}`;
-  const seasonStats = computeSeasonStatsForTeam(name);
-  const teamTotals = teamTotalsFromSeasonStats(seasonStats);
-  const roster = state.rosters[name];
-
-  const battingRows = seasonStats.batting.map((b) => {
-    const avg = b.ab > 0 ? b.h / b.ab : 0;
-    const obp = (b.ab + b.bb) > 0 ? (b.h + b.bb) / (b.ab + b.bb) : 0;
-    const totalBases = b.h + b.doubles + 2 * b.triples + 3 * b.hr;
-    const slg = b.ab > 0 ? totalBases / b.ab : 0;
-    const fmt = (x) => x.toFixed(3).replace(/^0/, '');
-    return `
-    <tr>
-      <td>#${b.number}</td><td>${playerLink(name, b.playerId, b.name)}${b.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${b.class}</td><td>${b.position}</td>
-      <td>${b.ab}</td><td>${b.h}</td><td>${b.r}</td><td>${b.rbi}</td><td>${b.bb}</td><td>${b.k}</td><td>${b.hr}</td>
-      <td>${fmt(avg)}</td><td>${fmt(obp)}</td><td>${fmt(slg)}</td><td>${fmt(obp + slg)}</td>
-    </tr>`;
-  }).join('');
-
-  const pitchingRows = seasonStats.pitching.map((p) => {
-    const ip = outsToIp(p.outs);
-    const era = p.outs > 0 ? ((p.er * 21) / p.outs).toFixed(2) : '0.00';
-    const whip = p.outs > 0 ? ((p.bb + p.h) / (p.outs / 3)).toFixed(2) : '0.00';
-    const kPer7 = p.outs > 0 ? ((p.k * 21) / p.outs).toFixed(1) : '0.0';
-    const oba = (p.outs + p.h) > 0 ? (p.h / (p.outs + p.h)).toFixed(3).replace(/^0/, '') : '.000';
-    return `
-    <tr>
-      <td>#${p.number}</td><td>${p.role} ${playerLink(name, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.w}-${p.l}${p.sv ? `, ${p.sv}sv` : ''}</td>
-      <td>${ip}</td><td>${p.h}</td><td>${p.er}</td><td>${p.bb}</td><td>${p.k}</td><td>${era}</td><td>${whip}</td><td>${kPer7}</td><td>${oba}</td>
-    </tr>`;
-  }).join('');
-
-  // Full 25-man roster (independent of whether they've recorded a stat line
-  // yet) -- lineup + bench hitters, then the full pitching staff.
-  const rosterHitterRows = [...roster.lineup, ...roster.bench].map((p) => `
-    <tr>
-      <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.position}</td>
-      <td>${p.ratings.contact}</td><td>${p.ratings.power}</td><td>${p.ratings.eye}</td>
-    </tr>`).join('');
-  const rosterPitcherRows = roster.pitchers.map((p) => `
-    <tr>
-      <td>#${p.number}</td><td>${playerLink(name, p.id, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${p.class}</td><td>${p.role}</td>
-      <td>${p.ratings.stuff}</td><td>${p.ratings.control}</td><td>${p.ratings.movement}</td>
-    </tr>`).join('');
-
-  const rosterUniqueCount = new Set([
-    ...roster.lineup.map((p) => p.id),
-    ...roster.bench.map((p) => p.id),
-    ...roster.pitchers.map((p) => p.id),
-  ]).size;
 
   document.getElementById('teamProfileContent').innerHTML = `
     <div class="tp-header">
@@ -2602,6 +2732,7 @@ function openTeamModal(name) {
       </div>
 
       <div data-inpage-panel="roster" style="display:none">
+        ${hasRoster ? `
         <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
         <div class="tp-roster-tables">
           <table class="standings-table tp-mini-table">
@@ -2613,10 +2744,11 @@ function openTeamModal(name) {
             <tbody>${rosterPitcherRows}</tbody>
           </table>
         </div>
+        ` : '<p class="view-note">Detailed roster ratings aren\'t retained for past years -- see the Stats tab for who played and how they did.</p>'}
       </div>
 
       <div data-inpage-panel="stats" style="display:none">
-        ${games.some((g) => g.played) ? `
+        ${(battingRows || pitchingRows) ? `
         <div class="tp-schedule-title">Season Stats <span class="view-note">includes postseason games played</span></div>
         <div class="tp-stacked-tables">
           <table class="standings-table tp-mini-table">
@@ -2632,7 +2764,7 @@ function openTeamModal(name) {
       </div>
 
       <div data-inpage-panel="schedule" style="display:none">
-        <div class="tp-schedule-title">Schedule (${games.length} games)</div>
+        <div class="tp-schedule-title">Schedule (${games.length} games)${!isCurrent ? ' <span class="view-note">box scores aren\'t available for past years</span>' : ''}</div>
         <div class="tp-game-list">${gameRows || '<p class="view-note">No games scheduled.</p>'}</div>
       </div>
     </div>
