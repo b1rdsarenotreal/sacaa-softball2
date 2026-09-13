@@ -61,7 +61,7 @@ function runSingleElim(slots, playGame) {
 // { name, roster, team, seed? }. `team` is the TEAMS_BY_NAME entry (fielding
 // pct); `roster` is that team's roster.js roster.
 function descriptorsFor(names, rosters, teamsByName) {
-  return names.map((name) => ({ name, roster: rosters[name], team: teamsByName[name] }));
+  return names.map((name, i) => ({ name, seed: i + 1, roster: rosters[name], team: teamsByName[name] }));
 }
 
 // Tracks how many elimination-bracket games each team has played, so a team

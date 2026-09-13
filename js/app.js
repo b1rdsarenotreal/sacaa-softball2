@@ -921,7 +921,7 @@ function computeAwards() {
   const buildTeam = (batPool, pitchPool) => {
     const team = {};
     AWARD_POSITIONS.forEach((pos) => { team[pos] = bestAtPosition(batPool, pos); });
-    team.P = bestOverall(pitchPool);
+    team.pitchers = [...pitchPool].sort((a, b) => b.war - a.war).slice(0, 3);
     return team;
   };
 
@@ -954,20 +954,23 @@ function computeAwards() {
 function findPlayerAwardsInSeason(awards, playerId, year) {
   if (!awards) return [];
   const badges = [];
-  const ALL_SLOTS = [...AWARD_POSITIONS, 'P'];
+  const checkTeam = (team, label) => {
+    AWARD_POSITIONS.forEach((slot) => {
+      if (team[slot]?.playerId === playerId) badges.push({ year, label: `${label} (${slot})` });
+    });
+    (team.pitchers || []).forEach((p) => {
+      if (p.playerId === playerId) badges.push({ year, label: `${label} (P)` });
+    });
+  };
   if (awards.national.playerOfYear?.playerId === playerId) badges.push({ year, label: 'National Player of the Year' });
   if (awards.national.pitcherOfYear?.playerId === playerId) badges.push({ year, label: 'National Pitcher of the Year' });
   if (awards.national.freshmanOfYear?.playerId === playerId) badges.push({ year, label: 'National Freshman of the Year' });
-  ALL_SLOTS.forEach((slot) => {
-    if (awards.national.team[slot]?.playerId === playerId) badges.push({ year, label: `All-American (${slot})` });
-  });
+  checkTeam(awards.national.team, 'All-American');
   Object.entries(awards.conferences).forEach(([conf, data]) => {
     if (data.playerOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Player of the Year` });
     if (data.pitcherOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Pitcher of the Year` });
     if (data.freshmanOfYear?.playerId === playerId) badges.push({ year, label: `${conf} Freshman of the Year` });
-    ALL_SLOTS.forEach((slot) => {
-      if (data.team[slot]?.playerId === playerId) badges.push({ year, label: `All-${conf} (${slot})` });
-    });
+    checkTeam(data.team, `All-${conf}`);
   });
   return badges;
 }
@@ -1004,11 +1007,14 @@ function teamAwardTableHTML(team) {
   const row = (label, p) => (p
     ? `<tr><td>${label}</td><td>#${p.number} ${playerLink(p.team, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${teamLink(p.team)}</td><td>${p.war.toFixed(1)}</td></tr>`
     : `<tr><td>${label}</td><td colspan="3" class="view-note">No qualified player</td></tr>`);
-  const rows = AWARD_POSITIONS.map((pos) => row(pos, team[pos])).join('') + row('P', team.P);
+  const positionRows = AWARD_POSITIONS.map((pos) => row(pos, team[pos])).join('');
+  const pitcherRows = team.pitchers.length > 0
+    ? team.pitchers.map((p, i) => row(`P${i + 1}`, p)).join('')
+    : row('P', null);
   return `
     <table class="standings-table tp-mini-table">
       <thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>WAR</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${positionRows}${pitcherRows}</tbody>
     </table>`;
 }
 
@@ -1051,7 +1057,7 @@ function renderAwards() {
 
   const teamSection = document.createElement('div');
   teamSection.className = 'bracket-section';
-  teamSection.innerHTML = `<h3>${teamLabel} <span class="view-note">best WAR at each position (min. 40 AB or 20 IP)</span></h3>`;
+  teamSection.innerHTML = `<h3>${teamLabel} <span class="view-note">best WAR at each position, plus the top 3 pitchers by WAR (min. 40 AB or 20 IP)</span></h3>`;
   const teamTableWrap = document.createElement('div');
   teamTableWrap.innerHTML = teamAwardTableHTML(data.team);
   teamSection.appendChild(teamTableWrap);
@@ -1624,10 +1630,14 @@ function renderRankings() {
 // Builds the inner content of one bracket match card: two team rows stacked
 // vertically (the standard bracket convention), winner bolded, score
 // right-aligned. Used both for tree-style brackets and flat match grids.
+function seedTag(seed) {
+  return seed !== undefined ? `<span class="seed-tag">${seed}</span>` : '';
+}
+
 function matchCardHTML(m, prefix) {
   if (!m.a || !m.b) {
     const solo = m.a || m.b;
-    return `<div class="bmatch-prefix">${prefix || ''}</div><div class="bmatch-row bmatch-bye">${solo ? `${teamBadge(solo.name, 18)}${teamLink(solo.name, { noBadge: true })}` : 'TBD'}<span class="bmatch-bye-tag">${solo ? 'bye' : ''}</span></div>`;
+    return `<div class="bmatch-prefix">${prefix || ''}</div><div class="bmatch-row bmatch-bye">${solo ? `${seedTag(solo.seed)}${teamBadge(solo.name, 18)}${teamLink(solo.name, { noBadge: true })}` : 'TBD'}<span class="bmatch-bye-tag">${solo ? 'bye' : ''}</span></div>`;
   }
   const aWin = m.winner?.name === m.a.name;
   let aScore = '';
@@ -1641,8 +1651,8 @@ function matchCardHTML(m, prefix) {
   }
   return `
     ${prefix ? `<div class="bmatch-prefix">${prefix}</div>` : ''}
-    <div class="bmatch-row ${aWin ? 'winner' : ''}">${teamBadge(m.a.name, 18)}<span class="bmatch-name">${teamLink(m.a.name, { noBadge: true })}</span><span class="bmatch-score">${aScore}</span></div>
-    <div class="bmatch-row ${!aWin ? 'winner' : ''}">${teamBadge(m.b.name, 18)}<span class="bmatch-name">${teamLink(m.b.name, { noBadge: true })}</span><span class="bmatch-score">${bScore}</span></div>
+    <div class="bmatch-row ${aWin ? 'winner' : ''}">${seedTag(m.a.seed)}${teamBadge(m.a.name, 18)}<span class="bmatch-name">${teamLink(m.a.name, { noBadge: true })}</span><span class="bmatch-score">${aScore}</span></div>
+    <div class="bmatch-row ${!aWin ? 'winner' : ''}">${seedTag(m.b.seed)}${teamBadge(m.b.name, 18)}<span class="bmatch-name">${teamLink(m.b.name, { noBadge: true })}</span><span class="bmatch-score">${bScore}</span></div>
   `;
 }
 
@@ -1762,7 +1772,7 @@ function renderPostseason() {
     regSection.className = 'bracket-section';
     regSection.innerHTML = `<h3>Regionals (Best-of-3) ${clickable ? '<span class="view-note">click for the series\' box scores</span>' : ''}</h3>`;
     const regGrid = document.createElement('div');
-    regGrid.className = 'bracket-grid';
+    regGrid.className = 'bracket-grid regionals-grid';
     regionals.forEach((m, i) => {
       regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
     });
