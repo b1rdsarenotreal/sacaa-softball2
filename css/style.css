@@ -742,6 +742,24 @@ main {
   white-space: nowrap;
 }
 
+.team-profile-back {
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+  display: inline-block;
+}
+
+.rank-badge {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--field-green);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.5;
+}
+
 .seed-tag {
   flex-shrink: 0;
   font-family: var(--font-mono);

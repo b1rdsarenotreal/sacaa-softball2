@@ -7,7 +7,7 @@ import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rank
 import { runConferenceTournament, selectField, runRegionals, runWorldSeries, previewWorldSeriesRound1, roundLabel } from './engine/postseason.js';
 
 const STORAGE_KEY = 'sacaa-season-v2';
-const SCHEMA_VERSION = 5; // bumped from 4: added recruiting (incoming recruit class + interest/visit/signing stages)
+const SCHEMA_VERSION = 6; // bumped from 5: added preseasonPoll
 const LOGO_STORAGE_KEY = 'sacaa-custom-logos-v1';
 const CONF_LOGO_STORAGE_KEY = 'sacaa-custom-conf-logos-v1';
 
@@ -273,6 +273,7 @@ function freshState(seed) {
     lastHomeMap: schedule.homeMap,
     currentSeasonLog: { weeks: [] },
     recruiting: { stage: null, recruits: [] },
+    preseasonPoll: [],
     totalWeeks: schedule.totalWeeks,
     currentWeek: 1,
     games: schedule.games,
@@ -582,12 +583,12 @@ function wireArchiveBar() {
   document.getElementById('archiveYear').addEventListener('change', (e) => {
     archiveFilter = { year: e.target.value === 'current' ? 'current' : Number(e.target.value), week: 'latest' };
     populateArchiveWeekOptions();
-    renderStandings(); renderRankings(); renderLeaders(); renderRecruiting(); renderPostseason();
+    renderStandings(); renderRankings(); renderLeaders(); renderAwards(); renderRecruiting(); renderPostseason();
   });
   document.getElementById('archiveWeek').addEventListener('change', (e) => {
     archiveFilter.week = e.target.value === 'postseason' || e.target.value === 'latest' ? e.target.value : Number(e.target.value);
     populateArchiveWeekOptions();
-    renderStandings(); renderRankings(); renderLeaders(); renderRecruiting(); renderPostseason();
+    renderStandings(); renderRankings(); renderLeaders(); renderAwards(); renderRecruiting(); renderPostseason();
   });
 }
 
@@ -1012,6 +1013,7 @@ async function advanceToNextSeason() {
     postseasonFullCache = null;
     state.currentSeasonLog = { weeks: [] };
     state.recruiting = { stage: null, recruits: [] };
+    ensurePreseasonPoll();
 
     await saveState();
     renderAll();
@@ -1221,10 +1223,21 @@ function teamAwardTableHTML(team) {
 function renderAwards() {
   const container = document.getElementById('awardsContent');
   container.innerHTML = '';
-  const played = state.games.some((g) => g.played);
-  if (!played) {
-    container.innerHTML = '<p class="view-note">Simulate a week to generate awards races.</p>';
-    return;
+
+  let awards;
+  if (archiveFilter.year === 'current') {
+    if (!(state.postseason && state.postseason.stage === 'complete')) {
+      container.innerHTML = '<p class="view-note">Awards are finalized once the season (including the postseason) is complete -- keep simming to see this year\'s winners.</p>';
+      return;
+    }
+    awards = computeAwards();
+  } else {
+    const h = state.history.find((x) => x.year === archiveFilter.year);
+    if (!h || !h.awards) {
+      container.innerHTML = '<p class="view-note">No awards recorded for that year.</p>';
+      return;
+    }
+    awards = h.awards;
   }
 
   const scopeSelect = document.getElementById('awardsScope');
@@ -1237,8 +1250,6 @@ function renderAwards() {
     });
   }
   const scope = scopeSelect.value || 'national';
-
-  const awards = computeAwards();
   const data = scope === 'national' ? awards.national : awards.conferences[scope];
   const label = scope === 'national' ? 'National' : scope;
   const teamLabel = scope === 'national' ? 'All-American Team' : `All-${scope} Team`;
@@ -1353,31 +1364,38 @@ function computeLeagueStats() {
   });
   const playerBatting = {};
   const playerPitching = {};
+  const teamTalents = computeTeamTalents(TEAMS); // for strength-of-schedule tracking below
 
   allCountedGames().filter((g) => g.played).forEach((g) => {
     const result = g.result.boxscore ? g.result : regenerateGameResult(g);
-    [['away', g.away], ['home', g.home]].forEach(([side, teamName]) => {
+    [['away', g.away, g.home], ['home', g.home, g.away]].forEach(([side, teamName, opponentName]) => {
       const tt = teamTotals[teamName];
+      const oppTalent = teamTalents[opponentName] || { batting: 50, pitching: 50 };
       result.boxscore[side].batting.forEach((b) => {
         tt.ab += b.ab; tt.h += b.h; tt.bb += b.bb; tt.r += b.r; tt.rbi += b.rbi;
         tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
         if (!playerBatting[b.playerId]) {
           playerBatting[b.playerId] = {
             playerId: b.playerId, name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, twoWay: b.twoWay,
-            ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0, positionCounts: {},
+            ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0, positionCounts: {}, sosWeightedSum: 0, sosWeight: 0,
           };
         }
         const pb = playerBatting[b.playerId];
         pb.ab += b.ab; pb.h += b.h; pb.bb += b.bb; pb.r += b.r; pb.rbi += b.rbi;
         pb.hr += b.hr; pb.doubles += b.doubles; pb.triples += b.triples; pb.k += b.k;
         pb.positionCounts[b.position] = (pb.positionCounts[b.position] || 0) + 1;
+        // A batter's strength of schedule is how tough the PITCHING they
+        // faced was, weighted by how many plate appearances came against it.
+        const pa = b.ab + b.bb;
+        pb.sosWeightedSum += oppTalent.pitching * pa;
+        pb.sosWeight += pa;
       });
       result.boxscore[side].pitching.forEach((p) => {
         tt.outs += p.outs; tt.pH += p.h; tt.er += p.er; tt.pBB += p.bb; tt.pK += p.k; tt.pR += p.r;
         if (!playerPitching[p.playerId]) {
           playerPitching[p.playerId] = {
             playerId: p.playerId, name: p.name, number: p.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: p.class, role: p.role, twoWay: p.twoWay,
-            outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0,
+            outs: 0, h: 0, er: 0, bb: 0, k: 0, w: 0, l: 0, sv: 0, sosWeightedSum: 0, sosWeight: 0,
           };
         }
         const pp = playerPitching[p.playerId];
@@ -1385,6 +1403,10 @@ function computeLeagueStats() {
         if (p.decision === 'W') pp.w += 1;
         if (p.decision === 'L') pp.l += 1;
         if (p.decision === 'SV') pp.sv += 1;
+        // A pitcher's strength of schedule is how tough the HITTING they
+        // faced was, weighted by outs recorded against it.
+        pp.sosWeightedSum += oppTalent.batting * p.outs;
+        pp.sosWeight += p.outs;
       });
     });
     const homeWon = g.result.homeScore > g.result.awayScore;
@@ -1411,6 +1433,12 @@ function computeLeagueStats() {
     const entries = Object.entries(p.positionCounts);
     p.position = entries.length > 0 ? entries.sort((a, b) => b[1] - a[1])[0][0] : 'UTIL';
     delete p.positionCounts;
+    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 50;
+    delete p.sosWeightedSum; delete p.sosWeight;
+  });
+  playerPitchingArr.forEach((p) => {
+    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 50;
+    delete p.sosWeightedSum; delete p.sosWeight;
   });
   computeWAR(playerBattingArr, playerPitchingArr);
   return { teamTotals: Object.values(teamTotals), playerBatting: playerBattingArr, playerPitching: playerPitchingArr };
@@ -1452,7 +1480,14 @@ function computeWAR(playerBatting, playerPitching) {
     if (p._pa > 0) {
       const runsAboveAvg = p._weighted - leagueRatePerPA * p._pa;
       const runsAboveReplacement = runsAboveAvg + REPLACEMENT_RUNS_PER_PA * p._pa;
-      p.war = runsAboveReplacement / RUNS_PER_WIN;
+      const rawWar = runsAboveReplacement / RUNS_PER_WIN;
+      // Strength of schedule adjustment: facing above-average pitching (sos
+      // > 50, the midpoint of the 28-72 talent scale) means these stats
+      // came against tougher competition and are worth a bit more; below-
+      // average pitching discounts them. Clamped so a small sample's SOS
+      // swing can't produce an absurd adjustment.
+      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 50) / 100));
+      p.war = rawWar * sosMultiplier;
     } else {
       p.war = 0;
     }
@@ -1470,7 +1505,12 @@ function computeWAR(playerBatting, playerPitching) {
     if (p.outs > 0) {
       const ip = p.outs / 3;
       const runsSavedVsReplacement = (replacementERA - (p.er * 9) / ip) * (ip / 9);
-      p.war = runsSavedVsReplacement / RUNS_PER_WIN;
+      const rawWar = runsSavedVsReplacement / RUNS_PER_WIN;
+      // Same idea for pitchers: sos here is the average batting strength
+      // they faced, so a tough-hitting schedule earns a boost and a soft
+      // one gets discounted.
+      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 50) / 100));
+      p.war = rawWar * sosMultiplier;
     } else {
       p.war = 0;
     }
@@ -1588,7 +1628,7 @@ function renderLeaders() {
     const warRows = Object.keys(warByPlayer).map((id) => ({ ...warInfoById[id], playerId: id, war: warByPlayer[id] }));
 
     playerCards = {
-      war: playerLeaderCard('WAR', [...warRows].sort((a, b) => b.war - a.war), 'WAR', (p) => p.war.toFixed(1)),
+      war: playerLeaderCard('WAR', [...warRows].sort((a, b) => b.war - a.war), 'WAR', (p) => `${p.war.toFixed(1)} <span class="view-note">(SOS ${p.sos.toFixed(0)})</span>`),
       avg: playerLeaderCard('Batting AVG', [...qualifiedBatters].sort((a, b) => (b.h / b.ab) - (a.h / a.ab)), 'AVG', (p) => (p.h / p.ab).toFixed(3).replace(/^0/, '')),
       hr: playerLeaderCard('Home Runs', [...playerBatting].sort((a, b) => b.hr - a.hr), 'HR', (p) => p.hr),
       rbi: playerLeaderCard('RBI', [...playerBatting].sort((a, b) => b.rbi - a.rbi), 'RBI', (p) => p.rbi),
@@ -1629,6 +1669,7 @@ function setMessage(msg) {
 /* ---------------- Rendering ---------------- */
 
 function renderAll() {
+  refreshPollRanks();
   renderStatus();
   renderControls();
   populateArchiveBar();
@@ -2112,10 +2153,41 @@ function confBadge(confName, size = 20, extraClass = '') {
   return buildBadgeHTML(customLogo, { primary: color, secondary: '#ffffff' }, confName.slice(0, 4), size, extraClass, `${confName} logo`);
 }
 
+let currentPollRanks = {}; // teamName -> 1-15 if ranked, refreshed once per render pass
+
+function refreshPollRanks() {
+  currentPollRanks = {};
+  const played = state.games.some((g) => g.played);
+  if (!played) {
+    (state.preseasonPoll || []).forEach((r) => { currentPollRanks[r.name] = r.rank; });
+    return;
+  }
+  const standings = computeStandings(TEAMS, state.games);
+  const poll = computeCoachesPoll(standings, PROGRAM_PRESTIGE, state.seed);
+  top15(poll).forEach((r) => { currentPollRanks[r.name] = r.rank; });
+}
+
+// Computes the poll teams enter week 1 with: no results exist yet, so it's
+// purely each program's current prestige (recent performance for a
+// returning dynasty, historical percentile alone for a brand-new one --
+// see computeDynamicPrestige), ranked and cut to the top 15. Once real
+// games are played, refreshPollRanks switches over to the live,
+// results-based Coaches Poll automatically.
+function ensurePreseasonPoll() {
+  const prestige = computeAllDynamicPrestige();
+  state.preseasonPoll = TEAMS
+    .map((t) => ({ name: t.name, conference: t.conference, prestige: prestige[t.name] }))
+    .sort((a, b) => b.prestige - a.prestige)
+    .slice(0, 15)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
 function teamLink(name, opts = {}) {
   const size = opts.size || 20;
   const badge = opts.noBadge ? '' : teamBadge(name, size);
-  return `<span class="team-link" data-team="${name}">${badge}<span class="team-link-name">${name}</span></span>`;
+  const rank = currentPollRanks[name];
+  const rankBadge = rank ? `<span class="rank-badge" title="#${rank} in the Coaches Poll">#${rank}</span>` : '';
+  return `<span class="team-link" data-team="${name}">${badge}${rankBadge}<span class="team-link-name">${name}</span></span>`;
 }
 
 function playerLink(teamName, playerId, displayName) {
@@ -2140,8 +2212,12 @@ function openPlayerModal(teamName, playerId) {
   // Current-season WAR needs league-wide context, so it's computed via the
   // same league pass the Leaders tab uses, then looked up for this player.
   const leagueStatsForWar = computeLeagueStats();
-  const playerWar = leagueStatsForWar.playerBatting.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0)
-    + leagueStatsForWar.playerPitching.filter((p) => p.playerId === playerId).reduce((s, p) => s + p.war, 0);
+  const myBattingWar = leagueStatsForWar.playerBatting.filter((p) => p.playerId === playerId);
+  const myPitchingWar = leagueStatsForWar.playerPitching.filter((p) => p.playerId === playerId);
+  const playerWar = myBattingWar.reduce((s, p) => s + p.war, 0) + myPitchingWar.reduce((s, p) => s + p.war, 0);
+  const sosParts = [];
+  if (myBattingWar.length > 0) sosParts.push(`SOS vs pitching ${myBattingWar[0].sos.toFixed(1)}`);
+  if (myPitchingWar.length > 0) sosParts.push(`SOS vs hitting ${myPitchingWar[0].sos.toFixed(1)}`);
 
   // Award badges: current season's awards only need computing if the
   // season has actually generated any (games played); past seasons come
@@ -2258,7 +2334,7 @@ function openPlayerModal(teamName, playerId) {
       <div>
         <h2>#${primary.number} ${primary.name}${isTwoWay ? ' <span class="two-way-tag">TW</span>' : ''}</h2>
         <p class="tp-sub">${primary.class} · ${roleLabel} · ${teamLink(teamName)}</p>
-        <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate)</span></p>
+        <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate${sosParts.length ? ` · ${sosParts.join(' · ')}, 50 = league-average schedule` : ''})</span></p>
         ${awardBadgesHTML}
       </div>
     </div>
@@ -2484,7 +2560,7 @@ function openTeamModal(name) {
     ...roster.pitchers.map((p) => p.id),
   ]).size;
 
-  document.getElementById('modalContent').innerHTML = `
+  document.getElementById('teamProfileContent').innerHTML = `
     <div class="tp-header">
       <div class="tp-badge-wrap">
         ${teamBadge(team.name, 56, 'team-badge-lg')}
@@ -2562,11 +2638,9 @@ function openTeamModal(name) {
     </div>
   `;
 
-  document.getElementById('teamModalOverlay').classList.add('open');
+  showTeamProfilePage();
 }
 
-// Shared by the regular-season and postseason box score modals: linescore
-// (with R/H/E) plus batting/pitching tables for both sides of one game.
 function boxScoreSectionHTML(result, awayName, homeName) {
   function battingTable(side, teamName) {
     const rows = result.boxscore[side].batting.map((b) => `
@@ -2733,6 +2807,29 @@ function wireTeamModal() {
 
 /* ---------------- Wiring ---------------- */
 
+let lastTabBeforeTeamProfile = null;
+
+// Team profiles are a real page (their own view, not a modal) -- this
+// remembers whichever tab was active before navigating here so the Back
+// button returns to it, then activates the team profile view the same way
+// wireTabs activates any other tab.
+function showTeamProfilePage() {
+  document.getElementById('teamModalOverlay').classList.remove('open'); // in case we navigated here from inside an open modal (e.g. a team link inside the conference/player modal)
+  const activeTab = document.querySelector('.tab.active');
+  if (activeTab) lastTabBeforeTeamProfile = activeTab.dataset.tab;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  document.getElementById('view-team-profile').classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function backFromTeamProfile() {
+  const target = lastTabBeforeTeamProfile || 'schedule';
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === target));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  document.getElementById(`view-${target}`).classList.add('active');
+}
+
 function wireTabs() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -2750,6 +2847,7 @@ function wireControls() {
   document.getElementById('btnSimPostseason').addEventListener('click', advancePostseasonStage);
   document.getElementById('btnAdvanceYear').addEventListener('click', advanceToNextSeason);
   document.getElementById('leaderConfFilter').addEventListener('change', renderLeaders);
+  document.getElementById('teamProfileBack').addEventListener('click', backFromTeamProfile);
   document.getElementById('awardsScope').addEventListener('change', renderAwards);
   document.getElementById('recruitingTeamFilter').addEventListener('change', renderRecruiting);
   document.getElementById('btnReset').addEventListener('click', () => {
@@ -2792,6 +2890,7 @@ async function init() {
     await loadTeams();
     await loadCustomLogos();
     state = (await loadState()) || freshState(Date.now() % 1000000);
+    if (!state.preseasonPoll || state.preseasonPoll.length === 0) ensurePreseasonPoll();
     await saveState();
     wireTabs();
     wireControls();

@@ -162,18 +162,23 @@ export function runSignings(recruits, teams, prestigeByTeam, talentsByTeam, rost
   teams.forEach((t) => {
     remainingNeeds[t.name] = { ...rosterNeedsByTeam[t.name] };
   });
+  // Note: a signed two-way recruit is always placed by advanceRosterOneSeason
+  // as a PITCHER-slot filler (who also happens to hit) -- never as a
+  // hitter-slot filler. So for supply/demand purposes here, 'twoWay' has to
+  // draw against the pitcher need too, or a team can end up "signing" more
+  // players than actually get placed on the roster (their extra hitter-need
+  // slots silently backfilled by random generation instead of the recruit
+  // who supposedly signed for them).
   const needsSpecialty = (name, specialty) => {
     const n = remainingNeeds[name];
     if (!n) return false;
     if (specialty === 'hitting') return n.hitters > 0;
-    if (specialty === 'pitching') return n.pitchers > 0;
-    return n.hitters > 0 || n.pitchers > 0; // two-way can fill either
+    return n.pitchers > 0; // 'pitching' and 'twoWay' both draw from the pitcher need
   };
   const fillSpecialty = (name, specialty) => {
     const n = remainingNeeds[name];
     if (specialty === 'hitting') { n.hitters -= 1; return; }
-    if (specialty === 'pitching') { n.pitchers -= 1; return; }
-    if (n.hitters >= n.pitchers) n.hitters -= 1; else n.pitchers -= 1;
+    n.pitchers -= 1; // 'pitching' and 'twoWay' both fill a pitcher slot
   };
 
   const order = [...recruits].sort((a, b) => b.stars - a.stars || rng() - 0.5);
