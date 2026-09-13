@@ -1,12 +1,13 @@
 import { generateSchedule } from './engine/schedule.js';
 import { computeLeagueAverages, simulateGame } from './engine/sim.js';
 import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers, computeProgramPrestige, computeTeamTalents, advanceRosterOneSeason } from './engine/roster.js';
+import { generateRecruitClass, runInitialInterest, runVisits, runSignings, TEAM_REGIONS, regionDistance } from './engine/recruiting.js';
 import { computeStandings, standingsByConference, overallStandings } from './engine/standings.js';
 import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rankings.js';
 import { runConferenceTournament, selectField, runRegionals, runWorldSeries, previewWorldSeriesRound1, roundLabel } from './engine/postseason.js';
 
 const STORAGE_KEY = 'sacaa-season-v2';
-const SCHEMA_VERSION = 4; // bumped from 3: added currentSeasonLog for weekly archive snapshots
+const SCHEMA_VERSION = 5; // bumped from 4: added recruiting (incoming recruit class + interest/visit/signing stages)
 const LOGO_STORAGE_KEY = 'sacaa-custom-logos-v1';
 const CONF_LOGO_STORAGE_KEY = 'sacaa-custom-conf-logos-v1';
 
@@ -271,6 +272,7 @@ function freshState(seed) {
     history: [],
     lastHomeMap: schedule.homeMap,
     currentSeasonLog: { weeks: [] },
+    recruiting: { stage: null, recruits: [] },
     totalWeeks: schedule.totalWeeks,
     currentWeek: 1,
     games: schedule.games,
@@ -436,6 +438,7 @@ async function simWeek() {
       state.currentWeek = week + 1;
     }
     snapshotWeek(week);
+    checkRecruitingStage(week);
     await saveState();
     renderAll();
     setMessage(`Week ${week} simulated (${weekGames.length} games).`);
@@ -475,6 +478,7 @@ function simWeekQuiet() {
   if (week >= state.totalWeeks) state.regularSeasonComplete = true;
   else state.currentWeek = week + 1;
   snapshotWeek(week);
+  checkRecruitingStage(week);
 }
 
 function computePostseasonResult() {
@@ -578,12 +582,12 @@ function wireArchiveBar() {
   document.getElementById('archiveYear').addEventListener('change', (e) => {
     archiveFilter = { year: e.target.value === 'current' ? 'current' : Number(e.target.value), week: 'latest' };
     populateArchiveWeekOptions();
-    renderStandings(); renderRankings(); renderLeaders(); renderPostseason();
+    renderStandings(); renderRankings(); renderLeaders(); renderRecruiting(); renderPostseason();
   });
   document.getElementById('archiveWeek').addEventListener('change', (e) => {
     archiveFilter.week = e.target.value === 'postseason' || e.target.value === 'latest' ? e.target.value : Number(e.target.value);
     populateArchiveWeekOptions();
-    renderStandings(); renderRankings(); renderLeaders(); renderPostseason();
+    renderStandings(); renderRankings(); renderLeaders(); renderRecruiting(); renderPostseason();
   });
 }
 
@@ -810,6 +814,114 @@ function postseasonButtonLabel() {
 // happen BEFORE rosters/games get replaced by the next season, since once
 // that happens there's no regenerating this season's box scores anymore --
 // this compact archive is what team/player profiles read for career history.
+// A team's "current" prestige for recruiting purposes: mostly how it's
+// actually been playing lately, with the original historical percentile
+// (brand/tradition/facilities) as a smaller, steadying baseline. This is
+// what makes recruiting -- and therefore team strength -- move over time
+// instead of every team just reverting to its static historical tier
+// forever: a couple of good seasons measurably raises a program's pull
+// with recruits, and a slump lowers it.
+function computeDynamicPrestige(teamName) {
+  const historical = PROGRAM_PRESTIGE[teamName] ?? 0.5;
+  const recentYears = state.history.slice(-2);
+  if (recentYears.length === 0) return historical;
+  let weightedSum = 0;
+  let totalWeight = 0;
+  recentYears.forEach((h, i) => {
+    const rec = h.teamRecords[teamName];
+    if (!rec) return;
+    const winPct = (rec.wins + rec.losses) > 0 ? rec.wins / (rec.wins + rec.losses) : 0.5;
+    const confChamp = h.conferenceChamps[TEAMS_BY_NAME[teamName]?.conference] === teamName;
+    const natChamp = h.nationalChampion === teamName;
+    const postseasonBonus = natChamp ? 0.18 : confChamp ? 0.08 : 0;
+    const weight = i + 1; // more recent of the two years counts more
+    weightedSum += Math.min(1, winPct + postseasonBonus) * weight;
+    totalWeight += weight;
+  });
+  if (totalWeight === 0) return historical;
+  const recentAvg = weightedSum / totalWeight;
+  return historical * 0.35 + recentAvg * 0.65;
+}
+
+function computeAllDynamicPrestige() {
+  const result = {};
+  TEAMS.forEach((t) => { result[t.name] = computeDynamicPrestige(t.name); });
+  return result;
+}
+
+// How many hitters/pitchers a team's roster will need for next season,
+// counted from the seniors on its CURRENT roster (they'll graduate at
+// season's end). This is what recruiting is filling.
+function computeRosterNeeds(teamName) {
+  const roster = state.rosters[teamName];
+  if (!roster) return { hitters: 0, pitchers: 0 };
+  const byId = new Map();
+  [...roster.lineup, ...roster.bench].forEach((p) => {
+    if (!byId.has(p.id)) byId.set(p.id, { class: p.class, hitter: false, pitcher: false });
+    byId.get(p.id).hitter = true;
+  });
+  roster.pitchers.forEach((p) => {
+    if (!byId.has(p.id)) byId.set(p.id, { class: p.class, hitter: false, pitcher: false });
+    byId.get(p.id).pitcher = true;
+  });
+  let hitters = 0;
+  let pitchers = 0;
+  byId.forEach((p) => {
+    if (p.class !== 'SR') return;
+    if (p.pitcher) pitchers += 1;
+    else hitters += 1;
+  });
+  return { hitters, pitchers };
+}
+
+function computeAllRosterNeeds() {
+  const result = {};
+  TEAMS.forEach((t) => { result[t.name] = computeRosterNeeds(t.name); });
+  return result;
+}
+
+// Generates this season's incoming recruit class, sized with a buffer over
+// total league need so most prospects find a home (see runSignings).
+function initRecruitingClass() {
+  const needs = computeAllRosterNeeds();
+  const totalNeeded = Object.values(needs).reduce((s, n) => s + n.hitters + n.pitchers, 0);
+  const poolSize = Math.max(80, Math.round(totalNeeded * 1.3));
+  state.recruiting = { stage: null, recruits: generateRecruitClass(TEAMS, state.seed + 777, poolSize) };
+}
+
+function runRecruitingStage(stage) {
+  const prestige = computeAllDynamicPrestige();
+  const talents = computeTeamTalents(TEAMS);
+  if (stage === 'interest') {
+    runInitialInterest(state.recruiting.recruits, TEAMS, prestige, talents, state.seed + 1001);
+  } else if (stage === 'visits') {
+    const standingsRows = computeStandings(TEAMS, state.games);
+    const formByTeam = {};
+    TEAMS.forEach((t) => {
+      const row = standingsRows.find((r) => r.name === t.name);
+      formByTeam[t.name] = row ? row.pct : 0.5;
+    });
+    runVisits(state.recruiting.recruits, TEAMS, prestige, talents, formByTeam, state.seed + 1002);
+  } else if (stage === 'signed') {
+    runSignings(state.recruiting.recruits, TEAMS, prestige, talents, computeAllRosterNeeds(), state.seed + 1003);
+  }
+  state.recruiting.stage = stage;
+}
+
+// Three checkpoints roughly every 4 weeks of the 13-week season: Initial
+// Interest at week 4, Visits at week 8, Signings at week 12 -- leaving the
+// final week of the regular season (and all of the postseason) with a
+// settled incoming class. The recruit class itself is generated lazily on
+// the first call each season (rather than inside freshState/
+// advanceToNextSeason) since it needs state.rosters to already exist,
+// which isn't true yet while that same state object is being built.
+function checkRecruitingStage(week) {
+  if (!state.recruiting || (!state.recruiting.stage && state.recruiting.recruits.length === 0)) initRecruitingClass();
+  if (week >= 4 && !state.recruiting.stage) runRecruitingStage('interest');
+  else if (week >= 8 && state.recruiting.stage === 'interest') runRecruitingStage('visits');
+  else if (week >= 12 && state.recruiting.stage === 'visits') runRecruitingStage('signed');
+}
+
 function archiveSeason() {
   const { teamTotals, playerBatting, playerPitching } = computeLeagueStats();
   const standings = computeStandings(TEAMS, allCountedGames());
@@ -863,12 +975,25 @@ async function advanceToNextSeason() {
   try {
     archiveSeason();
 
+    // Whoever actually signed with each team this season becomes their
+    // incoming freshman class (star rating drives their ratings -- see
+    // starsToTalent in roster.js); any slots recruiting didn't fill still
+    // fall back to the team's own percentile-based generation.
+    const signedRecruitsByTeam = {};
+    TEAMS.forEach((t) => { signedRecruitsByTeam[t.name] = []; });
+    if (state.recruiting && state.recruiting.stage === 'signed') {
+      state.recruiting.recruits.forEach((r) => {
+        if (r.signedWith) signedRecruitsByTeam[r.signedWith].push({ name: r.name, stars: r.stars, specialty: r.specialty });
+      });
+    }
+
     const talents = computeTeamTalents(TEAMS);
     const newRosters = {};
     TEAMS.forEach((t, i) => {
       newRosters[t.name] = advanceRosterOneSeason(
         state.rosters[t.name], t, talents[t.name],
-        state.seed + state.dynastyYear * 7919 + i * 131
+        state.seed + state.dynastyYear * 7919 + i * 131,
+        signedRecruitsByTeam[t.name]
       );
     });
 
@@ -886,6 +1011,7 @@ async function advanceToNextSeason() {
     state.postseason = null;
     postseasonFullCache = null;
     state.currentSeasonLog = { weeks: [] };
+    state.recruiting = { stage: null, recruits: [] };
 
     await saveState();
     renderAll();
@@ -984,6 +1110,80 @@ function getPlayerAwardBadges(playerId, currentSeasonAwards) {
   state.history.forEach((h) => { badges.push(...findPlayerAwardsInSeason(h.awards, playerId, h.year)); });
   if (currentSeasonAwards) badges.push(...findPlayerAwardsInSeason(currentSeasonAwards, playerId, state.dynastyYear));
   return badges.sort((a, b) => b.year - a.year);
+}
+
+function renderRecruiting() {
+  const container = document.getElementById('recruitingContent');
+  container.innerHTML = '';
+
+  if (archiveFilter.year !== 'current') {
+    container.innerHTML = '<p class="view-note">Recruiting always shows the live, in-progress season -- switch "Viewing" back to the current year to see it.</p>';
+    return;
+  }
+
+  if (!state.recruiting || state.recruiting.recruits.length === 0) {
+    container.innerHTML = '<p class="view-note">Recruiting hasn\'t started yet this season -- Initial Interest reveals at week 4.</p>';
+    return;
+  }
+
+  const filterSelect = document.getElementById('recruitingTeamFilter');
+  if (filterSelect.options.length <= 1) {
+    TEAMS.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((t) => {
+      const opt = document.createElement('option');
+      opt.value = t.name;
+      opt.textContent = t.name;
+      filterSelect.appendChild(opt);
+    });
+  }
+  const teamFilter = filterSelect.value || 'all';
+  const stage = state.recruiting.stage;
+
+  const stageNote = {
+    null: 'Not started yet -- Initial Interest reveals at week 4.',
+    interest: 'Initial Interest revealed -- Visits reveal at week 8.',
+    visits: 'Visits revealed -- Signings finalize at week 12.',
+    signed: 'Signings complete -- this class joins the roster next season.',
+  }[stage];
+  const banner = document.createElement('div');
+  banner.className = 'champion-banner';
+  banner.innerHTML = `<span>Recruiting: ${stageNote}</span>`;
+  container.appendChild(banner);
+
+  let recruits = state.recruiting.recruits;
+  if (teamFilter !== 'all') {
+    if (stage === 'signed') recruits = recruits.filter((r) => r.signedWith === teamFilter);
+    else if (stage === 'visits') recruits = recruits.filter((r) => r.visits.includes(teamFilter));
+    else if (stage === 'interest') recruits = recruits.filter((r) => r.interest.includes(teamFilter));
+    else recruits = [];
+  }
+  recruits = [...recruits].sort((a, b) => b.stars - a.stars);
+
+  const statusCol = stage === 'signed' ? 'Signed With' : stage === 'visits' ? 'Visiting' : stage === 'interest' ? 'Interested In' : 'Status';
+  const specialtyLabel = (s) => (s === 'hitting' ? 'Hitter' : s === 'pitching' ? 'Pitcher' : 'Two-Way');
+
+  const table = document.createElement('table');
+  table.className = 'standings-table';
+  table.style.width = '100%';
+  table.innerHTML = `<thead><tr><th>Stars</th><th>Name</th><th>Region</th><th>Specialty</th><th>${statusCol}</th></tr></thead>`;
+  const tbody = document.createElement('tbody');
+  recruits.forEach((r) => {
+    const tr = document.createElement('tr');
+    const stars = `<span class="recruit-stars">${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}</span>`;
+    let statusHTML = '<span class="view-note">Not revealed yet</span>';
+    if (stage === 'signed') statusHTML = r.signedWith ? teamLink(r.signedWith) : '<span class="view-note">Unsigned</span>';
+    else if (stage === 'visits') statusHTML = r.visits.map((t) => teamLink(t)).join(', ');
+    else if (stage === 'interest') statusHTML = r.interest.map((t) => teamLink(t)).join(', ');
+    tr.innerHTML = `<td>${stars}</td><td>${r.name}</td><td>${r.region}</td><td>${specialtyLabel(r.specialty)}</td><td>${statusHTML}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+  if (recruits.length === 0) {
+    const note = document.createElement('p');
+    note.className = 'view-note';
+    note.textContent = teamFilter === 'all' ? 'No recruits to show yet.' : `No recruits ${stage === 'signed' ? 'signed with' : stage === 'visits' ? 'visiting' : 'interested in'} ${teamFilter} right now.`;
+    container.appendChild(note);
+  }
 }
 
 function awardCardHTML(title, player) {
@@ -1437,6 +1637,7 @@ function renderAll() {
   renderRankings();
   renderLeaders();
   renderAwards();
+  renderRecruiting();
   renderPostseason();
   renderTeams();
 }
@@ -1734,19 +1935,45 @@ function renderPostseason() {
     container.appendChild(banner);
   }
 
-  if (conferenceTournaments) {
+  if (!conferenceTournaments) return; // nothing revealed yet -- just the banner above
+
+  // Tabs: one per conference (its own tournament bracket) plus a National
+  // Tournament tab (NCAA field, regionals, World Series) -- browsing one
+  // conference at a time instead of one long scroll through all of them.
+  const tabsWrap = document.createElement('div');
+  tabsWrap.className = 'inpage-tabs';
+  tabsWrap.setAttribute('data-inpage-tabs-scope', '');
+  const tabBar = document.createElement('div');
+  tabBar.className = 'inpage-tab-bar';
+  conferenceTournaments.forEach((ct, i) => {
+    const btn = document.createElement('button');
+    btn.className = `inpage-tab-btn${i === 0 ? ' active' : ''}`;
+    btn.dataset.inpageTab = `conf-${ct.conference}`;
+    btn.textContent = ct.conference;
+    tabBar.appendChild(btn);
+  });
+  const nationalBtn = document.createElement('button');
+  nationalBtn.className = 'inpage-tab-btn';
+  nationalBtn.dataset.inpageTab = 'national';
+  nationalBtn.textContent = 'National Tournament';
+  tabBar.appendChild(nationalBtn);
+  tabsWrap.appendChild(tabBar);
+
+  conferenceTournaments.forEach((ct, i) => {
+    const panel = document.createElement('div');
+    panel.dataset.inpagePanel = `conf-${ct.conference}`;
+    if (i !== 0) panel.style.display = 'none';
     const confSection = document.createElement('div');
     confSection.className = 'bracket-section';
-    confSection.innerHTML = `<h3>Conference Tournaments ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3>`;
-    conferenceTournaments.forEach((ct, ci) => {
-      const confWrap = document.createElement('div');
-      confWrap.className = 'conf-tourney-block';
-      confWrap.innerHTML = `<div class="conf-champ-line"><strong>${ct.conference}</strong> champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
-      confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds'], clickable));
-      confSection.appendChild(confWrap);
-    });
-    container.appendChild(confSection);
-  }
+    confSection.innerHTML = `<h3>${ct.conference} Tournament ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3><div class="conf-champ-line">Champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
+    confSection.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', i, 'rounds'], clickable));
+    panel.appendChild(confSection);
+    tabsWrap.appendChild(panel);
+  });
+
+  const nationalPanel = document.createElement('div');
+  nationalPanel.dataset.inpagePanel = 'national';
+  nationalPanel.style.display = 'none';
 
   if (field) {
     const fieldSection = document.createElement('div');
@@ -1764,7 +1991,7 @@ function renderPostseason() {
     });
     table.appendChild(tbody);
     fieldSection.appendChild(table);
-    container.appendChild(fieldSection);
+    nationalPanel.appendChild(fieldSection);
   }
 
   if (regionals) {
@@ -1777,7 +2004,7 @@ function renderPostseason() {
       regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
     });
     regSection.appendChild(regGrid);
-    container.appendChild(regSection);
+    nationalPanel.appendChild(regSection);
   }
 
   // World Series: either just the revealed Round 1 bracket (no results
@@ -1796,7 +2023,7 @@ function renderPostseason() {
       previewGrid.appendChild(card);
     });
     previewSection.appendChild(previewGrid);
-    container.appendChild(previewSection);
+    nationalPanel.appendChild(previewSection);
   }
 
   if (worldSeries) {
@@ -1827,8 +2054,11 @@ function renderPostseason() {
       gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable));
     }
     wsSection.appendChild(gfGrid);
-    container.appendChild(wsSection);
+    nationalPanel.appendChild(wsSection);
   }
+
+  tabsWrap.appendChild(nationalPanel);
+  container.appendChild(tabsWrap);
 }
 
 function renderTeams() {
@@ -2277,42 +2507,59 @@ function openTeamModal(name) {
     </div>
     ${games.some((g) => g.played) ? `<p class="tp-team-totals">Season: AVG ${teamTotals.avg.toFixed(3).replace(/^0/, '')} · OBP ${teamTotals.obp.toFixed(3).replace(/^0/, '')} · SLG ${teamTotals.slg.toFixed(3).replace(/^0/, '')} &nbsp;|&nbsp; ERA ${teamTotals.era.toFixed(2)} · WHIP ${teamTotals.whip.toFixed(2)}</p>` : ''}
 
-    ${teamHistory.length > 0 ? `
-    <div class="tp-schedule-title">Dynasty History</div>
-    <table class="standings-table tp-mini-table">
-      <thead><tr><th>Year</th><th>Record</th><th>Conf</th><th>Postseason</th></tr></thead>
-      <tbody>${historyRows}</tbody>
-    </table>
-    ` : ''}
+    <div class="inpage-tabs" data-inpage-tabs-scope>
+      <div class="inpage-tab-bar">
+        <button class="inpage-tab-btn active" data-inpage-tab="overview">Overview</button>
+        <button class="inpage-tab-btn" data-inpage-tab="roster">Roster</button>
+        <button class="inpage-tab-btn" data-inpage-tab="stats">Stats</button>
+        <button class="inpage-tab-btn" data-inpage-tab="schedule">Schedule</button>
+      </div>
 
-    <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
-    <div class="tp-roster-tables">
-      <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Hitter</th><th>Cl</th><th>Pos</th><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>
-        <tbody>${rosterHitterRows}</tbody>
-      </table>
-      <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>Role</th><th>Stuff</th><th>Control</th><th>Movement</th></tr></thead>
-        <tbody>${rosterPitcherRows}</tbody>
-      </table>
+      <div data-inpage-panel="overview">
+        ${teamHistory.length > 0 ? `
+        <div class="tp-schedule-title">Dynasty History</div>
+        <table class="standings-table tp-mini-table">
+          <thead><tr><th>Year</th><th>Record</th><th>Conf</th><th>Postseason</th></tr></thead>
+          <tbody>${historyRows}</tbody>
+        </table>
+        ` : '<p class="view-note">This is the program\'s first season in this dynasty -- history will build up year over year.</p>'}
+      </div>
+
+      <div data-inpage-panel="roster" style="display:none">
+        <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
+        <div class="tp-roster-tables">
+          <table class="standings-table tp-mini-table">
+            <thead><tr><th>#</th><th>Hitter</th><th>Cl</th><th>Pos</th><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>
+            <tbody>${rosterHitterRows}</tbody>
+          </table>
+          <table class="standings-table tp-mini-table">
+            <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>Role</th><th>Stuff</th><th>Control</th><th>Movement</th></tr></thead>
+            <tbody>${rosterPitcherRows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-inpage-panel="stats" style="display:none">
+        ${games.some((g) => g.played) ? `
+        <div class="tp-schedule-title">Season Stats <span class="view-note">includes postseason games played</span></div>
+        <div class="tp-stacked-tables">
+          <table class="standings-table tp-mini-table">
+            <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th></tr></thead>
+            <tbody>${battingRows}</tbody>
+          </table>
+          <table class="standings-table tp-mini-table">
+            <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th><th>K/7</th><th>OBA</th></tr></thead>
+            <tbody>${pitchingRows}</tbody>
+          </table>
+        </div>
+        ` : '<p class="view-note">No games played yet this season.</p>'}
+      </div>
+
+      <div data-inpage-panel="schedule" style="display:none">
+        <div class="tp-schedule-title">Schedule (${games.length} games)</div>
+        <div class="tp-game-list">${gameRows || '<p class="view-note">No games scheduled.</p>'}</div>
+      </div>
     </div>
-
-    ${games.some((g) => g.played) ? `
-    <div class="tp-schedule-title">Season Stats <span class="view-note">includes postseason games played</span></div>
-    <div class="tp-stacked-tables">
-      <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Batter</th><th>Cl</th><th>Pos</th><th>AB</th><th>H</th><th>R</th><th>RBI</th><th>BB</th><th>K</th><th>HR</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th></tr></thead>
-        <tbody>${battingRows}</tbody>
-      </table>
-      <table class="standings-table tp-mini-table">
-        <thead><tr><th>#</th><th>Pitcher</th><th>Cl</th><th>W-L</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th><th>K/7</th><th>OBA</th></tr></thead>
-        <tbody>${pitchingRows}</tbody>
-      </table>
-    </div>
-    ` : ''}
-
-    <div class="tp-schedule-title">Schedule (${games.length} games)</div>
-    <div class="tp-game-list">${gameRows || '<p class="view-note">No games scheduled.</p>'}</div>
   `;
 
   document.getElementById('teamModalOverlay').classList.add('open');
@@ -2455,6 +2702,17 @@ function closeTeamModal() {
 
 function wireTeamModal() {
   document.addEventListener('click', (e) => {
+    const inPageTab = e.target.closest('[data-inpage-tab]');
+    if (inPageTab) {
+      const scope = inPageTab.closest('[data-inpage-tabs-scope]');
+      if (scope) {
+        scope.querySelectorAll('[data-inpage-tab]').forEach((b) => b.classList.toggle('active', b === inPageTab));
+        scope.querySelectorAll('[data-inpage-panel]').forEach((p) => {
+          p.style.display = p.dataset.inpagePanel === inPageTab.dataset.inpageTab ? '' : 'none';
+        });
+      }
+      return;
+    }
     const link = e.target.closest('.team-link');
     if (link) { openTeamModal(link.dataset.team); return; }
     const confLink = e.target.closest('[data-conf]');
@@ -2493,6 +2751,7 @@ function wireControls() {
   document.getElementById('btnAdvanceYear').addEventListener('click', advanceToNextSeason);
   document.getElementById('leaderConfFilter').addEventListener('change', renderLeaders);
   document.getElementById('awardsScope').addEventListener('change', renderAwards);
+  document.getElementById('recruitingTeamFilter').addEventListener('change', renderRecruiting);
   document.getElementById('btnReset').addEventListener('click', () => {
     if (confirm('Start a brand new dynasty? This clears all current results AND all dynasty history (past seasons, career stats). If you just want next season, use "Advance to Next Season" instead.')) newSeason();
   });

@@ -1021,6 +1021,12 @@ main {
   margin-top: 2px;
 }
 
+.recruit-stars {
+  color: #C99A2E;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
 .award-badges {
   display: flex;
   flex-wrap: wrap;
@@ -1037,6 +1043,32 @@ main {
   border: 1px solid #EAD3AE;
   border-radius: 999px;
   padding: 3px 10px;
+}
+
+.inpage-tab-bar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: 18px 0 16px;
+}
+
+.inpage-tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.inpage-tab-btn:hover { color: var(--ink); }
+
+.inpage-tab-btn.active {
+  color: var(--field-green);
+  border-bottom-color: var(--clay);
 }
 
 .tp-schedule-title {

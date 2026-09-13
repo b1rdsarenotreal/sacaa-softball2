@@ -117,7 +117,7 @@ const POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DP'];
 const BENCH_POSITIONS = ['C', 'IF', 'IF', 'OF', 'OF', 'UTIL'];
 const CLASSES = ['FR', 'SO', 'JR', 'SR'];
 
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -141,7 +141,7 @@ function shuffle(arr, rng) {
 // Roughly bell-shaped noise centered on 0, spread about ±1.
 function noise(rng) { return ((rng() + rng() + rng()) / 3 - 0.5) * 2; }
 
-function randomName(rng, used) {
+export function randomName(rng, used) {
   let name;
   let guard = 0;
   do {
@@ -244,8 +244,8 @@ function computeHistoricalPercentiles(teams) {
   return result;
 }
 
-const TALENT_MIN = 28;
-const TALENT_RANGE = 44; // talent baseline spans TALENT_MIN..TALENT_MIN+TALENT_RANGE
+export const TALENT_MIN = 28;
+export const TALENT_RANGE = 44; // talent baseline spans TALENT_MIN..TALENT_MIN+TALENT_RANGE
 
 export function computeTeamTalents(teams) {
   const percentiles = computeHistoricalPercentiles(teams);
@@ -514,7 +514,19 @@ function nextClass(cls) {
 // whatever's left. Pitching staff roles and the batting order are
 // re-ranked fresh each year, since who's the ace or who leads off can
 // reasonably shift as a roster turns over.
-export function advanceRosterOneSeason(roster, team, talents, seed = 1) {
+// Converts a recruit's star rating (1-5) into the same 28-72 talent
+// baseline the historical-percentile system uses, so a signed recruit's
+// ratings come out of the exact same generator (genHitterRatings /
+// genPitcherRatings) as everyone else -- just centered on their own talent
+// instead of their new team's. A little noise keeps recruits of the same
+// star rating from being identical.
+export function starsToTalent(stars, rng) {
+  const base = TALENT_MIN + ((stars - 1) / 4) * TALENT_RANGE;
+  const noise = (rng() - 0.5) * 8;
+  return Math.max(TALENT_MIN - 6, Math.min(TALENT_MIN + TALENT_RANGE + 6, base + noise));
+}
+
+export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRecruits = []) {
   const rng = mulberry32(seed);
   const usedNames = new Set([...roster.lineup, ...roster.bench, ...roster.pitchers].map((p) => p.name));
   const previousPositions = new Map(roster.lineup.map((p) => [p.id, p.position]));
@@ -545,21 +557,57 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1) {
     }
   });
 
+  // Signed recruits (from the recruiting system, if any signed with this
+  // team) fill slots first -- their star rating drives their talent, which
+  // is what makes recruiting well or poorly actually matter for a team's
+  // trajectory. Any slots recruiting didn't fill (too few signings, or no
+  // recruiting class passed in at all) fall back to the team's own
+  // percentile-based generation, exactly as before.
+  const availableHitterRecruits = signedRecruits.filter((r) => r.specialty === 'hitting');
+  const availablePitcherRecruits = signedRecruits.filter((r) => r.specialty === 'pitching');
+  const availableTwoWayRecruits = signedRecruits.filter((r) => r.specialty === 'twoWay');
+  let twoWayIdx = 0;
+
   const recruitedHitters = [];
   for (let i = 0; i < graduatedHitterSlots; i++) {
-    recruitedHitters.push({
-      id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
-      hitterRatings: genHitterRatings(talents.batting, rng),
-    });
+    const signed = availableHitterRecruits[i];
+    if (signed) {
+      recruitedHitters.push({
+        id: nextId(team.name), name: signed.name, class: 'FR',
+        hitterRatings: genHitterRatings(starsToTalent(signed.stars, rng), rng),
+      });
+    } else {
+      recruitedHitters.push({
+        id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
+        hitterRatings: genHitterRatings(talents.batting, rng),
+      });
+    }
   }
   const recruitedPitchers = [];
   for (let i = 0; i < graduatedPitcherSlots; i++) {
-    const p = {
-      id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
-      pitcherRatings: genPitcherRatings(talents.pitching, rng, 'RP'),
-    };
-    if (rng() < 0.15) p.hitterRatings = genHitterRatings(talents.batting, rng);
-    recruitedPitchers.push(p);
+    const signedPitcher = availablePitcherRecruits[i];
+    const signedTwoWay = !signedPitcher ? availableTwoWayRecruits[twoWayIdx] : null;
+    if (signedPitcher) {
+      recruitedPitchers.push({
+        id: nextId(team.name), name: signedPitcher.name, class: 'FR',
+        pitcherRatings: genPitcherRatings(starsToTalent(signedPitcher.stars, rng), rng, 'RP'),
+      });
+    } else if (signedTwoWay) {
+      twoWayIdx += 1;
+      const talentBase = starsToTalent(signedTwoWay.stars, rng);
+      recruitedPitchers.push({
+        id: nextId(team.name), name: signedTwoWay.name, class: 'FR',
+        pitcherRatings: genPitcherRatings(talentBase, rng, 'RP'),
+        hitterRatings: genHitterRatings(talentBase, rng),
+      });
+    } else {
+      const p = {
+        id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
+        pitcherRatings: genPitcherRatings(talents.pitching, rng, 'RP'),
+      };
+      if (rng() < 0.15) p.hitterRatings = genHitterRatings(talents.batting, rng);
+      recruitedPitchers.push(p);
+    }
   }
 
   // --- Pitching staff: rank the returning + recruited arms, assign roles fresh ---

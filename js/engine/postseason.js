@@ -121,19 +121,20 @@ export function runConferenceTournament(conferenceStandingRows, teamsByName, ros
 // and a head-to-head nudge for teams that beat fellow tournament teams
 // during the regular season.
 export function selectField(conferenceChampions, rankings, games, fieldSize = 16) {
+  // Automatic bids (conference tournament champions) get in regardless of
+  // overall record, same as the real NCAA -- winning your conference
+  // tournament is the qualifying feat, full stop. Only at-large bids
+  // require a winning record.
   const isEligible = (r) => r.wins >= r.losses;
-  const rankingsByName = Object.fromEntries(rankings.map((r) => [r.name, r]));
 
   const autoBidNames = new Set(
     conferenceChampions
       .map((c) => c.champion?.name)
       .filter(Boolean)
-      .filter((name) => rankingsByName[name] && isEligible(rankingsByName[name]))
   );
 
-  const eligibleRankings = rankings.filter(isEligible);
-  const autoBids = eligibleRankings.filter((r) => autoBidNames.has(r.name));
-  const atLargePool = eligibleRankings.filter((r) => !autoBidNames.has(r.name)); // already RPI-sorted
+  const autoBids = rankings.filter((r) => autoBidNames.has(r.name));
+  const atLargePool = rankings.filter((r) => !autoBidNames.has(r.name) && isEligible(r)); // already RPI-sorted
   const atLargeCount = Math.max(0, fieldSize - autoBids.length);
   const atLarge = atLargePool.slice(0, atLargeCount);
   const fieldRows = [...autoBids, ...atLarge];
