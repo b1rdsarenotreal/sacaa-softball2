@@ -779,6 +779,23 @@ main {
   white-space: nowrap;
 }
 
+.tp-year-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 10px 0 16px;
+}
+
+.tp-year-filter select {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  font-size: 0.85rem;
+}
+
 .team-profile-back {
   font-size: 0.9rem;
   margin-bottom: 16px;
@@ -1139,8 +1156,6 @@ main {
 .tp-schedule-title:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
 
 .tp-game-list {
-  max-height: 380px;
-  overflow-y: auto;
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;

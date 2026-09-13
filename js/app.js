@@ -1152,6 +1152,19 @@ function renderRecruiting() {
   banner.innerHTML = `<span>Recruiting: ${stageNote}</span>`;
   container.appendChild(banner);
 
+  const tabsWrap = document.createElement('div');
+  tabsWrap.className = 'inpage-tabs';
+  tabsWrap.setAttribute('data-inpage-tabs-scope', '');
+  tabsWrap.innerHTML = `
+    <div class="inpage-tab-bar">
+      <button class="inpage-tab-btn active" data-inpage-tab="rankings">Rankings</button>
+      <button class="inpage-tab-btn" data-inpage-tab="recruits">Recruits</button>
+    </div>
+  `;
+
+  // --- Rankings tab: aggregate team score, only meaningful once signed ---
+  const rankPanel = document.createElement('div');
+  rankPanel.dataset.inpagePanel = 'rankings';
   if (stage === 'signed') {
     const scoreByTeam = {};
     TEAMS.forEach((t) => { scoreByTeam[t.name] = { points: 0, count: 0 }; });
@@ -1163,8 +1176,7 @@ function renderRecruiting() {
     const ranked = TEAMS
       .map((t) => ({ name: t.name, ...scoreByTeam[t.name] }))
       .filter((t) => t.count > 0)
-      .sort((a, b) => b.points - a.points)
-      .slice(0, 25);
+      .sort((a, b) => b.points - a.points);
 
     const rankSection = document.createElement('div');
     rankSection.className = 'bracket-section';
@@ -1181,13 +1193,16 @@ function renderRecruiting() {
     });
     rankTable.appendChild(rankBody);
     rankSection.appendChild(rankTable);
-    container.appendChild(rankSection);
-
-    const boardTitle = document.createElement('div');
-    boardTitle.className = 'tp-schedule-title';
-    boardTitle.textContent = 'Recruit Board';
-    container.appendChild(boardTitle);
+    rankPanel.appendChild(rankSection);
+  } else {
+    rankPanel.innerHTML = '<p class="view-note">Recruiting Class Rankings appear once signings are final (week 12).</p>';
   }
+  tabsWrap.appendChild(rankPanel);
+
+  // --- Recruits tab: the individual prospect board ---
+  const recruitsPanel = document.createElement('div');
+  recruitsPanel.dataset.inpagePanel = 'recruits';
+  recruitsPanel.style.display = 'none';
 
   let recruits = state.recruiting.recruits;
   if (teamFilter !== 'all') {
@@ -1217,13 +1232,16 @@ function renderRecruiting() {
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  container.appendChild(table);
+  recruitsPanel.appendChild(table);
   if (recruits.length === 0) {
     const note = document.createElement('p');
     note.className = 'view-note';
     note.textContent = teamFilter === 'all' ? 'No recruits to show yet.' : `No recruits ${stage === 'signed' ? 'signed with' : stage === 'visits' ? 'visiting' : 'interested in'} ${teamFilter} right now.`;
-    container.appendChild(note);
+    recruitsPanel.appendChild(note);
   }
+  tabsWrap.appendChild(recruitsPanel);
+
+  container.appendChild(tabsWrap);
 }
 
 function awardCardHTML(title, player) {
@@ -2299,7 +2317,7 @@ function openPlayerModal(teamName, playerId) {
   // Award badges: current season's awards only need computing if the
   // season has actually generated any (games played); past seasons come
   // straight from the archive.
-  const currentSeasonAwards = state.games.some((g) => g.played) ? computeAwards() : null;
+  const currentSeasonAwards = (state.postseason && state.postseason.stage === 'complete') ? computeAwards() : null;
   const awardBadges = getPlayerAwardBadges(playerId, currentSeasonAwards);
   const awardBadgesHTML = awardBadges.length > 0
     ? `<div class="award-badges">${awardBadges.map((a) => `<span class="award-badge" title="${a.year}">🏆 ${a.label} (${a.year})</span>`).join('')}</div>`
@@ -2529,12 +2547,13 @@ function openConferenceModal(confName) {
   document.getElementById('teamModalOverlay').classList.add('open');
 }
 
-function openTeamModal(name) {
+function openTeamModal(name, yearOverride) {
   const team = TEAMS_BY_NAME[name];
   if (!team) return;
 
-  const isCurrent = archiveFilter.year === 'current';
-  const archivedYear = isCurrent ? null : state.history.find((h) => h.year === archiveFilter.year);
+  const selectedYear = yearOverride !== undefined ? yearOverride : archiveFilter.year;
+  const isCurrent = selectedYear === 'current';
+  const archivedYear = isCurrent ? null : state.history.find((h) => h.year === selectedYear);
 
   let row;
   let games;
@@ -2705,6 +2724,13 @@ function openTeamModal(name) {
           ${customLogos[team.name] ? `· <button class="link-btn" data-reset-logo-team="${team.name}">Reset to default</button>` : ''}
         </p>
       </div>
+    </div>
+    <div class="tp-year-filter">
+      <label for="teamProfileYearSelect">Year:</label>
+      <select id="teamProfileYearSelect" data-team-profile-name="${name}">
+        <option value="current"${isCurrent ? ' selected' : ''}>${state.dynastyYear} (current)</option>
+        ${state.history.slice().sort((a, b) => b.year - a.year).map((h) => `<option value="${h.year}"${!isCurrent && selectedYear === h.year ? ' selected' : ''}>${h.year}</option>`).join('')}
+      </select>
     </div>
     <div class="tp-records">
       <div class="tp-record-box"><span class="num">${row.wins}-${row.losses}</span><span class="label">overall</span></div>
@@ -2907,6 +2933,12 @@ function closeTeamModal() {
 }
 
 function wireTeamModal() {
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'teamProfileYearSelect') {
+      const yearVal = e.target.value === 'current' ? 'current' : Number(e.target.value);
+      openTeamModal(e.target.dataset.teamProfileName, yearVal);
+    }
+  });
   document.addEventListener('click', (e) => {
     const inPageTab = e.target.closest('[data-inpage-tab]');
     if (inPageTab) {
