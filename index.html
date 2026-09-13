@@ -30,6 +30,7 @@
   <button class="tab" data-tab="standings">Standings</button>
   <button class="tab" data-tab="rankings">Rankings</button>
   <button class="tab" data-tab="leaders">Leaders</button>
+  <button class="tab" data-tab="awards">Awards</button>
   <button class="tab" data-tab="postseason">Postseason</button>
   <button class="tab" data-tab="teams">Teams</button>
 </nav>
@@ -98,6 +99,19 @@
       </div>
     </div>
     <div id="leadersContent"></div>
+  </section>
+
+  <section id="view-awards" class="view">
+    <div class="view-header">
+      <h2>Awards</h2>
+      <div class="leader-filter">
+        <label for="awardsScope">Scope:</label>
+        <select id="awardsScope">
+          <option value="national">National</option>
+        </select>
+      </div>
+    </div>
+    <div id="awardsContent"></div>
   </section>
 
   <section id="view-postseason" class="view">

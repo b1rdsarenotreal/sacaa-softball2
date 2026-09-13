@@ -213,6 +213,22 @@ export function runRegionals(fieldRows, teamsByName, rosters, league, seed = 1) 
 
 // True 8-team double-elimination World Series. `entrants` are descriptors
 // (with `.seed` from the regional round, lower = better).
+// Just the World Series' Round 1 pairing (seed 1v8, 4v5, 2v7, 3v6), with no
+// games played -- for a "here's the bracket" reveal moment before actually
+// simulating it. Uses the same seeding as runWorldSeries so the real thing
+// matches this preview exactly once it's played.
+export function previewWorldSeriesRound1(entrants) {
+  const ordered = entrants.slice().sort((a, b) => a.seed - b.seed);
+  const slots = seedBracket(ordered);
+  const matchups = [];
+  for (let i = 0; i < slots.length; i += 2) {
+    const a = slots[i];
+    const b = slots[i + 1];
+    matchups.push({ a, b, winner: null });
+  }
+  return matchups;
+}
+
 export function runWorldSeries(entrants, league, seed = 1) {
   const ordered = entrants.slice().sort((a, b) => a.seed - b.seed);
   const wb1Slots = seedBracket(ordered);

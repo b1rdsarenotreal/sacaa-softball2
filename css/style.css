@@ -975,6 +975,23 @@ main {
   width: 20px;
 }
 
+.award-winner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.award-winner-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.award-winner-sub {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
 .tp-schedule-title {
   font-family: var(--font-display);
   font-weight: 700;

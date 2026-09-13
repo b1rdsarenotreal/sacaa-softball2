@@ -3,7 +3,7 @@ import { computeLeagueAverages, simulateGame } from './engine/sim.js';
 import { generateRosters, buildGameRoster, pickStarterForGame, computeProgramTiers, computeProgramPrestige, computeTeamTalents, advanceRosterOneSeason } from './engine/roster.js';
 import { computeStandings, standingsByConference, overallStandings } from './engine/standings.js';
 import { computeRankings, top25, computeCoachesPoll, top15 } from './engine/rankings.js';
-import { runConferenceTournament, selectField, runRegionals, runWorldSeries, roundLabel } from './engine/postseason.js';
+import { runConferenceTournament, selectField, runRegionals, runWorldSeries, previewWorldSeriesRound1, roundLabel } from './engine/postseason.js';
 
 const STORAGE_KEY = 'sacaa-season-v2';
 const SCHEMA_VERSION = 4; // bumped from 3: added currentSeasonLog for weekly archive snapshots
@@ -515,7 +515,7 @@ function getWeeksArrayForYear(year) {
 }
 
 function yearHasPostseason(year) {
-  if (year === 'current') return !!state.postseason;
+  if (year === 'current') return !!(state.postseason && state.postseason.stage === 'complete');
   const h = state.history.find((x) => x.year === year);
   return !!(h && h.postseasonBracket);
 }
@@ -613,26 +613,35 @@ function flattenPostseasonGames() {
     });
   };
 
-  full.conferenceTournaments.forEach((ct) => {
-    ct.rounds.forEach((round) => round.forEach(addSingle));
-  });
-  full.regionals.forEach((m) => {
-    if (!m.games) return;
-    m.games.forEach((g) => {
-      const homeNm = g.aIsHome ? m.a.name : m.b.name;
-      const awayNm = g.aIsHome ? m.b.name : m.a.name;
-      games.push({
-        home: homeNm, away: awayNm,
-        result: { homeScore: g.homeScore, awayScore: g.awayScore, boxscore: g.boxscore },
-        played: true, conferenceGame: false,
+  // Only fold in whichever stages have actually been revealed so far --
+  // records/stats/leaderboards/awards should reflect the postseason
+  // progressively as it's played, not all at once at the very end.
+  if (state.postseason.conferenceTournaments) {
+    full.conferenceTournaments.forEach((ct) => {
+      ct.rounds.forEach((round) => round.forEach(addSingle));
+    });
+  }
+  if (state.postseason.regionals) {
+    full.regionals.forEach((m) => {
+      if (!m.games) return;
+      m.games.forEach((g) => {
+        const homeNm = g.aIsHome ? m.a.name : m.b.name;
+        const awayNm = g.aIsHome ? m.b.name : m.a.name;
+        games.push({
+          home: homeNm, away: awayNm,
+          result: { homeScore: g.homeScore, awayScore: g.awayScore, boxscore: g.boxscore },
+          played: true, conferenceGame: false,
+        });
       });
     });
-  });
-  const ws = full.worldSeries;
-  ws.winnersBracket.forEach((round) => round.forEach(addSingle));
-  ws.losersBracket.forEach((round) => round.forEach(addSingle));
-  addSingle(ws.grandFinal.game1);
-  addSingle(ws.grandFinal.game2);
+  }
+  if (state.postseason.worldSeries) {
+    const ws = full.worldSeries;
+    ws.winnersBracket.forEach((round) => round.forEach(addSingle));
+    ws.losersBracket.forEach((round) => round.forEach(addSingle));
+    addSingle(ws.grandFinal.game1);
+    addSingle(ws.grandFinal.game2);
+  }
 
   return games;
 }
@@ -679,23 +688,120 @@ function computePlayerGameLog(teamName, playerId) {
   return { battingLog, pitchingLog };
 }
 
-async function simPostseason() {
-  if (!state.regularSeasonComplete) return;
+function stripForStorage(obj) {
+  return JSON.parse(JSON.stringify(obj, (key, value) => {
+    if (key === 'roster' || key === 'team' || key === 'boxscore') return undefined;
+    return value;
+  }));
+}
+
+// The postseason is broken into five reveal/sim steps rather than one big
+// button: sim conference tournaments, reveal the NCAA field/seeding, sim
+// regionals, reveal the World Series bracket, sim the World Series. The
+// underlying simulation is still fully deterministic from state.seed, so
+// under the hood each step just re-derives the same computePostseasonResult
+// (cheap, see getPostseasonFull) and reveals the next slice of it -- what's
+// persisted in state.postseason is only whatever's been revealed so far, so
+// reloading mid-reveal resumes at the same step instead of jumping ahead.
+async function simConferenceTournaments() {
+  if (!state.regularSeasonComplete || state.postseason) return;
   try {
     postseasonFullCache = computePostseasonResult();
-    const champion = postseasonFullCache.worldSeries.champion.name;
-
-    const postseason = JSON.parse(JSON.stringify(postseasonFullCache, (key, value) => {
-      if (key === 'roster' || key === 'team' || key === 'boxscore') return undefined;
-      return value;
-    }));
-    state.postseason = postseason;
+    state.postseason = {
+      stage: 'conferenceTournaments',
+      conferenceTournaments: stripForStorage(postseasonFullCache.conferenceTournaments),
+    };
     await saveState();
     renderAll();
-    setMessage(`National Champion: ${champion}!`);
+    setMessage('Conference tournaments complete.');
   } catch (err) {
-    console.error('Postseason simulation failed:', err);
-    setMessage(`Postseason simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
+    console.error('Conference tournament simulation failed:', err);
+    setMessage(`Conference tournament simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
+  }
+}
+
+async function revealNCAAField() {
+  if (!state.postseason || state.postseason.stage !== 'conferenceTournaments') return;
+  try {
+    const full = getPostseasonFull();
+    state.postseason.stage = 'fieldRevealed';
+    state.postseason.field = stripForStorage(full.field);
+    await saveState();
+    renderAll();
+    setMessage('NCAA Field revealed.');
+  } catch (err) {
+    console.error('Revealing the NCAA field failed:', err);
+    setMessage(`Couldn't reveal the NCAA field: ${(err && err.message) || err}`);
+  }
+}
+
+async function simRegionals() {
+  if (!state.postseason || state.postseason.stage !== 'fieldRevealed') return;
+  try {
+    const full = getPostseasonFull();
+    state.postseason.stage = 'regionals';
+    state.postseason.regionals = stripForStorage(full.regionals);
+    await saveState();
+    renderAll();
+    setMessage('Regionals complete.');
+  } catch (err) {
+    console.error('Regional simulation failed:', err);
+    setMessage(`Regional simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
+  }
+}
+
+async function revealWorldSeriesBracket() {
+  if (!state.postseason || state.postseason.stage !== 'regionals') return;
+  try {
+    const full = getPostseasonFull();
+    const winners = full.regionals.map((m) => m.winner);
+    const preview = previewWorldSeriesRound1(winners);
+    state.postseason.stage = 'worldSeriesRevealed';
+    state.postseason.worldSeriesPreview = stripForStorage(preview);
+    await saveState();
+    renderAll();
+    setMessage('World Series bracket set.');
+  } catch (err) {
+    console.error('Revealing the World Series bracket failed:', err);
+    setMessage(`Couldn't reveal the World Series bracket: ${(err && err.message) || err}`);
+  }
+}
+
+async function simWorldSeries() {
+  if (!state.postseason || state.postseason.stage !== 'worldSeriesRevealed') return;
+  try {
+    const full = getPostseasonFull();
+    state.postseason.stage = 'complete';
+    state.postseason.worldSeries = stripForStorage(full.worldSeries);
+    delete state.postseason.worldSeriesPreview;
+    await saveState();
+    renderAll();
+    setMessage(`National Champion: ${full.worldSeries.champion.name}!`);
+  } catch (err) {
+    console.error('World Series simulation failed:', err);
+    setMessage(`World Series simulation failed: ${(err && err.message) || err} — try "New Season" to reset, or check the console (F12) for details.`);
+  }
+}
+
+// Routes the single postseason button to whichever step comes next.
+async function advancePostseasonStage() {
+  if (!state.regularSeasonComplete) return;
+  const stage = state.postseason && state.postseason.stage;
+  if (!state.postseason) await simConferenceTournaments();
+  else if (stage === 'conferenceTournaments') await revealNCAAField();
+  else if (stage === 'fieldRevealed') await simRegionals();
+  else if (stage === 'regionals') await revealWorldSeriesBracket();
+  else if (stage === 'worldSeriesRevealed') await simWorldSeries();
+}
+
+function postseasonButtonLabel() {
+  if (!state.postseason) return 'Sim Conference Tournaments';
+  switch (state.postseason.stage) {
+    case 'conferenceTournaments': return 'Reveal NCAA Field';
+    case 'fieldRevealed': return 'Sim Regionals';
+    case 'regionals': return 'Reveal World Series Bracket';
+    case 'worldSeriesRevealed': return 'Sim World Series';
+    default: return 'Postseason Complete';
   }
 }
 
@@ -752,7 +858,7 @@ function archiveSeason() {
 // regular season under a new year number. Distinct from "New Season", which
 // starts a brand new independent dynasty and wipes history.
 async function advanceToNextSeason() {
-  if (!state.postseason) return;
+  if (!state.postseason || state.postseason.stage !== 'complete') return;
   try {
     archiveSeason();
 
@@ -787,6 +893,132 @@ async function advanceToNextSeason() {
     console.error('Advance to Next Season failed:', err);
     setMessage(`Couldn't advance to next season: ${(err && err.message) || err}`);
   }
+}
+
+const AWARD_POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DP'];
+
+// Awards are WAR-based: for each position, whoever posted the best WAR
+// while primarily playing there; for the marquee awards, whoever posted
+// the best WAR overall (in their category). Uses the same qualification
+// minimums as the leaderboards so a two-at-bat outlier can't win an award.
+function computeAwards() {
+  const { playerBatting, playerPitching } = computeLeagueStats();
+  const MIN_AB = 40;
+  const MIN_OUTS = 60;
+  const qualifiedBatters = playerBatting.filter((p) => p.ab >= MIN_AB);
+  const qualifiedPitchers = playerPitching.filter((p) => p.outs >= MIN_OUTS);
+
+  const bestAtPosition = (pool, position) => {
+    const atPos = pool.filter((p) => p.position === position);
+    return atPos.length > 0 ? [...atPos].sort((a, b) => b.war - a.war)[0] : null;
+  };
+  const bestOverall = (pool) => (pool.length > 0 ? [...pool].sort((a, b) => b.war - a.war)[0] : null);
+  const bestFreshman = (batPool, pitchPool) => {
+    const combined = [...batPool.filter((p) => p.class === 'FR'), ...pitchPool.filter((p) => p.class === 'FR')];
+    return combined.length > 0 ? [...combined].sort((a, b) => b.war - a.war)[0] : null;
+  };
+  const buildTeam = (batPool, pitchPool) => {
+    const team = {};
+    AWARD_POSITIONS.forEach((pos) => { team[pos] = bestAtPosition(batPool, pos); });
+    team.P = bestOverall(pitchPool);
+    return team;
+  };
+
+  const national = {
+    playerOfYear: bestOverall(qualifiedBatters),
+    pitcherOfYear: bestOverall(qualifiedPitchers),
+    freshmanOfYear: bestFreshman(qualifiedBatters, qualifiedPitchers),
+    team: buildTeam(qualifiedBatters, qualifiedPitchers),
+  };
+
+  const conferences = {};
+  Object.keys(CONFERENCES).forEach((conf) => {
+    const confBatters = qualifiedBatters.filter((p) => p.conference === conf);
+    const confPitchers = qualifiedPitchers.filter((p) => p.conference === conf);
+    conferences[conf] = {
+      playerOfYear: bestOverall(confBatters),
+      pitcherOfYear: bestOverall(confPitchers),
+      freshmanOfYear: bestFreshman(confBatters, confPitchers),
+      team: buildTeam(confBatters, confPitchers),
+    };
+  });
+
+  return { national, conferences };
+}
+
+function awardCardHTML(title, player) {
+  if (!player) {
+    return `<div class="leaderboard-card"><h4>${title}</h4><p class="view-note">No qualified players yet.</p></div>`;
+  }
+  return `
+    <div class="leaderboard-card">
+      <h4>${title}</h4>
+      <div class="award-winner">
+        ${teamBadge(player.team, 32)}
+        <div>
+          <div class="award-winner-name">#${player.number} ${playerLink(player.team, player.playerId, player.name)}${player.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</div>
+          <div class="award-winner-sub">${teamLink(player.team)} · ${player.war.toFixed(1)} WAR</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function teamAwardTableHTML(team) {
+  const row = (label, p) => (p
+    ? `<tr><td>${label}</td><td>#${p.number} ${playerLink(p.team, p.playerId, p.name)}${p.twoWay ? ' <span class="two-way-tag">TW</span>' : ''}</td><td>${teamLink(p.team)}</td><td>${p.war.toFixed(1)}</td></tr>`
+    : `<tr><td>${label}</td><td colspan="3" class="view-note">No qualified player</td></tr>`);
+  const rows = AWARD_POSITIONS.map((pos) => row(pos, team[pos])).join('') + row('P', team.P);
+  return `
+    <table class="standings-table tp-mini-table">
+      <thead><tr><th>Pos</th><th>Player</th><th>Team</th><th>WAR</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderAwards() {
+  const container = document.getElementById('awardsContent');
+  container.innerHTML = '';
+  const played = state.games.some((g) => g.played);
+  if (!played) {
+    container.innerHTML = '<p class="view-note">Simulate a week to generate awards races.</p>';
+    return;
+  }
+
+  const scopeSelect = document.getElementById('awardsScope');
+  if (scopeSelect.options.length <= 1) {
+    Object.keys(CONFERENCES).sort().forEach((conf) => {
+      const opt = document.createElement('option');
+      opt.value = conf;
+      opt.textContent = conf;
+      scopeSelect.appendChild(opt);
+    });
+  }
+  const scope = scopeSelect.value || 'national';
+
+  const awards = computeAwards();
+  const data = scope === 'national' ? awards.national : awards.conferences[scope];
+  const label = scope === 'national' ? 'National' : scope;
+  const teamLabel = scope === 'national' ? 'All-American Team' : `All-${scope} Team`;
+
+  const awardsSection = document.createElement('div');
+  awardsSection.className = 'bracket-section';
+  awardsSection.innerHTML = `
+    <h3>${label} Awards <span class="view-note">based on WAR, includes postseason games played</span></h3>
+    <div class="leaderboard-grid">
+      ${awardCardHTML('Player of the Year', data.playerOfYear)}
+      ${awardCardHTML('Pitcher of the Year', data.pitcherOfYear)}
+      ${awardCardHTML('Freshman of the Year', data.freshmanOfYear)}
+    </div>
+  `;
+  container.appendChild(awardsSection);
+
+  const teamSection = document.createElement('div');
+  teamSection.className = 'bracket-section';
+  teamSection.innerHTML = `<h3>${teamLabel} <span class="view-note">best WAR at each position (min. 40 AB or 20 IP)</span></h3>`;
+  const teamTableWrap = document.createElement('div');
+  teamTableWrap.innerHTML = teamAwardTableHTML(data.team);
+  teamSection.appendChild(teamTableWrap);
+  container.appendChild(teamSection);
 }
 
 function outsToIp(outs) {
@@ -888,13 +1120,14 @@ function computeLeagueStats() {
         tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
         if (!playerBatting[b.playerId]) {
           playerBatting[b.playerId] = {
-            playerId: b.playerId, name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, position: b.position, twoWay: b.twoWay,
-            ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0,
+            playerId: b.playerId, name: b.name, number: b.number, team: teamName, conference: TEAMS_BY_NAME[teamName].conference, class: b.class, twoWay: b.twoWay,
+            ab: 0, h: 0, bb: 0, r: 0, rbi: 0, hr: 0, doubles: 0, triples: 0, k: 0, positionCounts: {},
           };
         }
         const pb = playerBatting[b.playerId];
         pb.ab += b.ab; pb.h += b.h; pb.bb += b.bb; pb.r += b.r; pb.rbi += b.rbi;
         pb.hr += b.hr; pb.doubles += b.doubles; pb.triples += b.triples; pb.k += b.k;
+        pb.positionCounts[b.position] = (pb.positionCounts[b.position] || 0) + 1;
       });
       result.boxscore[side].pitching.forEach((p) => {
         tt.outs += p.outs; tt.pH += p.h; tt.er += p.er; tt.pBB += p.bb; tt.pK += p.k; tt.pR += p.r;
@@ -927,6 +1160,15 @@ function computeLeagueStats() {
 
   const playerBattingArr = Object.values(playerBatting);
   const playerPitchingArr = Object.values(playerPitching);
+  // A player's "primary position" for awards/display purposes is whichever
+  // defensive spot they played most this season, not just wherever they
+  // happened to start their first game (bench substitution game to game
+  // means this can genuinely vary).
+  playerBattingArr.forEach((p) => {
+    const entries = Object.entries(p.positionCounts);
+    p.position = entries.length > 0 ? entries.sort((a, b) => b[1] - a[1])[0][0] : 'UTIL';
+    delete p.positionCounts;
+  });
   computeWAR(playerBattingArr, playerPitchingArr);
   return { teamTotals: Object.values(teamTotals), playerBatting: playerBattingArr, playerPitching: playerPitchingArr };
 }
@@ -1151,6 +1393,7 @@ function renderAll() {
   renderStandings();
   renderRankings();
   renderLeaders();
+  renderAwards();
   renderPostseason();
   renderTeams();
 }
@@ -1166,8 +1409,11 @@ function renderStatus() {
 function renderControls() {
   document.getElementById('btnSimWeek').disabled = state.regularSeasonComplete;
   document.getElementById('btnSimToEnd').disabled = state.regularSeasonComplete;
-  document.getElementById('btnSimPostseason').disabled = !state.regularSeasonComplete || !!state.postseason;
-  document.getElementById('btnAdvanceYear').disabled = !state.postseason;
+  const postseasonComplete = !!(state.postseason && state.postseason.stage === 'complete');
+  const btnPostseason = document.getElementById('btnSimPostseason');
+  btnPostseason.disabled = !state.regularSeasonComplete || postseasonComplete;
+  btnPostseason.textContent = postseasonComplete ? 'Postseason Complete' : postseasonButtonLabel();
+  document.getElementById('btnAdvanceYear').disabled = !postseasonComplete;
 }
 
 function teamRecordThrough(games, teamName, uptoWeek) {
@@ -1417,93 +1663,125 @@ function renderPostseason() {
   const postseason = getArchivePostseasonBracket();
   if (!postseason) {
     container.innerHTML = archiveFilter.year === 'current'
-      ? '<p class="view-note">Regular season complete. Click "Sim Postseason" to run conference tournaments through the World Series.</p>'
+      ? '<p class="view-note">Regular season complete. Click "Sim Conference Tournaments" to get started.</p>'
       : '<p class="view-note">No postseason recorded for that year.</p>';
     return;
   }
-  const clickable = archiveFilter.year === 'current';
+  // A past archived year is always fully complete; only the current year's
+  // postseason can be mid-reveal, and only the current year's completed
+  // matches have working box scores (see renderBracketTree's `clickable`).
+  const isCurrent = archiveFilter.year === 'current';
+  const clickable = isCurrent;
 
-  const { conferenceTournaments, field, regionals, worldSeries } = postseason;
+  const { conferenceTournaments, field, regionals, worldSeriesPreview, worldSeries } = postseason;
 
-  const banner = document.createElement('div');
-  banner.className = 'champion-banner';
-  banner.innerHTML = `${teamBadge(worldSeries.champion.name, 40)}<span>National Champion: ${worldSeries.champion.name}</span>`;
-  container.appendChild(banner);
-
-  // Conference tournaments -- one visual bracket tree per conference
-  const confSection = document.createElement('div');
-  confSection.className = 'bracket-section';
-  confSection.innerHTML = `<h3>Conference Tournaments ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3>`;
-  conferenceTournaments.forEach((ct, ci) => {
-    const confWrap = document.createElement('div');
-    confWrap.className = 'conf-tourney-block';
-    confWrap.innerHTML = `<div class="conf-champ-line"><strong>${ct.conference}</strong> champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
-    confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds'], clickable));
-    confSection.appendChild(confWrap);
-  });
-  container.appendChild(confSection);
-
-  // NCAA field
-  const fieldSection = document.createElement('div');
-  fieldSection.className = 'bracket-section';
-  fieldSection.innerHTML = '<h3>NCAA Field (Seeded 1–16) <span class="view-note">seeding blends RPI, top-10 wins, conference tournament result, strength of schedule, and head-to-head</span></h3>';
-  const table = document.createElement('table');
-  table.className = 'standings-table';
-  table.style.width = '100%';
-  table.innerHTML = '<thead><tr><th>Seed</th><th>Team</th><th>Berth</th><th>RPI</th><th>Top-10 Wins</th><th>SOS (OWP)</th></tr></thead>';
-  const tbody = document.createElement('tbody');
-  field.forEach((f) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${f.seed}</td><td>${teamLink(f.name)}</td><td>${f.berth}</td><td>${f.rpi.toFixed(3)}</td><td>${f.top10Wins}</td><td>${f.owp.toFixed(3)}</td>`;
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  fieldSection.appendChild(table);
-  container.appendChild(fieldSection);
-
-  // Regionals -- one round of best-of-3s; a card grid rather than a tree
-  // since there's nothing upstream to connect them to yet.
-  const regSection = document.createElement('div');
-  regSection.className = 'bracket-section';
-  regSection.innerHTML = `<h3>Regionals (Best-of-3) ${clickable ? '<span class="view-note">click for the series\' box scores</span>' : ''}</h3>`;
-  const regGrid = document.createElement('div');
-  regGrid.className = 'bracket-grid';
-  regionals.forEach((m, i) => {
-    regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
-  });
-  regSection.appendChild(regGrid);
-  container.appendChild(regSection);
-
-  // World Series -- true double elimination: winners' bracket tree, losers'
-  // bracket tree, then the grand final (with an "if necessary" decider).
-  const wsSection = document.createElement('div');
-  wsSection.className = 'bracket-section';
-  wsSection.innerHTML = `<h3>World Series <span class="view-note">(double elimination)${clickable ? ' — click any match for its box score' : ''}</span></h3>`;
-
-  const wbLabel = document.createElement('div');
-  wbLabel.className = 'ws-bracket-label';
-  wbLabel.textContent = "Winners' Bracket";
-  wsSection.appendChild(wbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket'], clickable));
-
-  const lbLabel = document.createElement('div');
-  lbLabel.className = 'ws-bracket-label';
-  lbLabel.textContent = "Losers' Bracket";
-  wsSection.appendChild(lbLabel);
-  wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket'], clickable));
-
-  const gfLabel = document.createElement('div');
-  gfLabel.className = 'ws-bracket-label';
-  gfLabel.textContent = "Grand Final (winners' bracket champion must lose twice)";
-  wsSection.appendChild(gfLabel);
-  const gfGrid = document.createElement('div');
-  gfGrid.className = 'bracket-grid';
-  gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1', clickable));
-  if (worldSeries.grandFinal.game2) {
-    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable));
+  if (worldSeries) {
+    const banner = document.createElement('div');
+    banner.className = 'champion-banner';
+    banner.innerHTML = `${teamBadge(worldSeries.champion.name, 40)}<span>National Champion: ${worldSeries.champion.name}</span>`;
+    container.appendChild(banner);
+  } else if (isCurrent) {
+    const banner = document.createElement('div');
+    banner.className = 'champion-banner';
+    banner.innerHTML = `<span>Postseason in progress — click "${postseasonButtonLabel()}" above to continue</span>`;
+    container.appendChild(banner);
   }
-  wsSection.appendChild(gfGrid);
-  container.appendChild(wsSection);
+
+  if (conferenceTournaments) {
+    const confSection = document.createElement('div');
+    confSection.className = 'bracket-section';
+    confSection.innerHTML = `<h3>Conference Tournaments ${clickable ? '<span class="view-note">click any match for its box score</span>' : ''}</h3>`;
+    conferenceTournaments.forEach((ct, ci) => {
+      const confWrap = document.createElement('div');
+      confWrap.className = 'conf-tourney-block';
+      confWrap.innerHTML = `<div class="conf-champ-line"><strong>${ct.conference}</strong> champion: <span class="winner">${teamLink(ct.champion.name)}</span></div>`;
+      confWrap.appendChild(renderBracketTree(ct.rounds, null, ['conferenceTournaments', ci, 'rounds'], clickable));
+      confSection.appendChild(confWrap);
+    });
+    container.appendChild(confSection);
+  }
+
+  if (field) {
+    const fieldSection = document.createElement('div');
+    fieldSection.className = 'bracket-section';
+    fieldSection.innerHTML = '<h3>NCAA Field (Seeded 1–16) <span class="view-note">seeding blends RPI, top-10 wins, conference tournament result, strength of schedule, and head-to-head</span></h3>';
+    const table = document.createElement('table');
+    table.className = 'standings-table';
+    table.style.width = '100%';
+    table.innerHTML = '<thead><tr><th>Seed</th><th>Team</th><th>Berth</th><th>RPI</th><th>Top-10 Wins</th><th>SOS (OWP)</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    field.forEach((f) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${f.seed}</td><td>${teamLink(f.name)}</td><td>${f.berth}</td><td>${f.rpi.toFixed(3)}</td><td>${f.top10Wins}</td><td>${f.owp.toFixed(3)}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    fieldSection.appendChild(table);
+    container.appendChild(fieldSection);
+  }
+
+  if (regionals) {
+    const regSection = document.createElement('div');
+    regSection.className = 'bracket-section';
+    regSection.innerHTML = `<h3>Regionals (Best-of-3) ${clickable ? '<span class="view-note">click for the series\' box scores</span>' : ''}</h3>`;
+    const regGrid = document.createElement('div');
+    regGrid.className = 'bracket-grid';
+    regionals.forEach((m, i) => {
+      regGrid.appendChild(buildMatchCard(m, ['regionals', i], null, clickable));
+    });
+    regSection.appendChild(regGrid);
+    container.appendChild(regSection);
+  }
+
+  // World Series: either just the revealed Round 1 bracket (no results
+  // yet), or -- once simulated -- the full double-elimination bracket with
+  // winners' bracket, losers' bracket, and grand final.
+  if (worldSeriesPreview && !worldSeries) {
+    const previewSection = document.createElement('div');
+    previewSection.className = 'bracket-section';
+    previewSection.innerHTML = '<h3>World Series Bracket <span class="view-note">set — click "Sim World Series" above to play it out</span></h3>';
+    const previewGrid = document.createElement('div');
+    previewGrid.className = 'bracket-grid';
+    worldSeriesPreview.forEach((m) => {
+      const card = document.createElement('div');
+      card.className = 'bmatch';
+      card.innerHTML = matchCardHTML(m);
+      previewGrid.appendChild(card);
+    });
+    previewSection.appendChild(previewGrid);
+    container.appendChild(previewSection);
+  }
+
+  if (worldSeries) {
+    const wsSection = document.createElement('div');
+    wsSection.className = 'bracket-section';
+    wsSection.innerHTML = `<h3>World Series <span class="view-note">(double elimination)${clickable ? ' — click any match for its box score' : ''}</span></h3>`;
+
+    const wbLabel = document.createElement('div');
+    wbLabel.className = 'ws-bracket-label';
+    wbLabel.textContent = "Winners' Bracket";
+    wsSection.appendChild(wbLabel);
+    wsSection.appendChild(renderBracketTree(worldSeries.winnersBracket, ['Round 1', 'Semifinal', "Winners' Final"], ['worldSeries', 'winnersBracket'], clickable));
+
+    const lbLabel = document.createElement('div');
+    lbLabel.className = 'ws-bracket-label';
+    lbLabel.textContent = "Losers' Bracket";
+    wsSection.appendChild(lbLabel);
+    wsSection.appendChild(renderBracketTree(worldSeries.losersBracket, ['Round 1', 'Round 2', 'Round 3', "Losers' Final"], ['worldSeries', 'losersBracket'], clickable));
+
+    const gfLabel = document.createElement('div');
+    gfLabel.className = 'ws-bracket-label';
+    gfLabel.textContent = "Grand Final (winners' bracket champion must lose twice)";
+    wsSection.appendChild(gfLabel);
+    const gfGrid = document.createElement('div');
+    gfGrid.className = 'bracket-grid';
+    gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game1, ['worldSeries', 'grandFinal', 'game1'], 'Game 1', clickable));
+    if (worldSeries.grandFinal.game2) {
+      gfGrid.appendChild(buildMatchCard(worldSeries.grandFinal.game2, ['worldSeries', 'grandFinal', 'game2'], 'Game 2 (if necessary)', clickable));
+    }
+    wsSection.appendChild(gfGrid);
+    container.appendChild(wsSection);
+  }
 }
 
 function renderTeams() {
@@ -2126,9 +2404,10 @@ function wireTabs() {
 function wireControls() {
   document.getElementById('btnSimWeek').addEventListener('click', simWeek);
   document.getElementById('btnSimToEnd').addEventListener('click', simToEnd);
-  document.getElementById('btnSimPostseason').addEventListener('click', simPostseason);
+  document.getElementById('btnSimPostseason').addEventListener('click', advancePostseasonStage);
   document.getElementById('btnAdvanceYear').addEventListener('click', advanceToNextSeason);
   document.getElementById('leaderConfFilter').addEventListener('change', renderLeaders);
+  document.getElementById('awardsScope').addEventListener('change', renderAwards);
   document.getElementById('btnReset').addEventListener('click', () => {
     if (confirm('Start a brand new dynasty? This clears all current results AND all dynasty history (past seasons, career stats). If you just want next season, use "Advance to Next Season" instead.')) newSeason();
   });
