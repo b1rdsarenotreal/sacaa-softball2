@@ -2,7 +2,7 @@
 // Generates a 25-man roster per team: ~16-18 position players and ~7-9
 // pitchers (fluid, always summing to 25), plus 0-2 "two-way" pitchers who
 // also hit and can crack the starting lineup. Every player is built from
-// RATINGS (20-80 scouting scale, mean 50) rather than raw stat lines --
+// RATINGS (20-100 scouting scale, mean 60) rather than raw stat lines --
 // Contact/Power/Eye for hitters, Stuff/Control/Movement for pitchers -- and
 // the sim engine (sim.js) turns those ratings directly into plate-appearance
 // outcomes. Ratings are anchored to each team's real batting/pitching
@@ -273,7 +273,7 @@ function stdev(arr) {
   return Math.sqrt(mean(arr.map((x) => (x - m) ** 2))) || 1;
 }
 
-// --- Team talent baselines (20-80 scale, mean 50) -------------------------
+// --- Team talent baselines (20-100 scale, mean 60) -------------------------
 // The imported stats (teams.json batting/pitching) are treated as a
 // *historical* signal only -- which programs are traditionally strong vs.
 // weak -- not as literal numbers to simulate off of. We rank every team by
@@ -336,7 +336,7 @@ function computeHistoricalPercentiles(teams) {
   // *within* the conference is still preserved (their best team is still
   // clearly their best team -- it just tops out around "Strong" instead of
   // "Elite").
-  const CAPPED_CONFERENCE_CEILING = { GNAC: 0.78, PWC: 0.78 };
+  const CAPPED_CONFERENCE_CEILING = { GNAC: 0.78, PWC: 0.78, CCAA: 0.78 };
   teams.forEach((t) => {
     const cap = CAPPED_CONFERENCE_CEILING[t.conference];
     if (cap === undefined) return;
@@ -347,8 +347,8 @@ function computeHistoricalPercentiles(teams) {
   return result;
 }
 
-export const TALENT_MIN = 28;
-export const TALENT_RANGE = 44; // talent baseline spans TALENT_MIN..TALENT_MIN+TALENT_RANGE
+export const TALENT_MIN = 31;
+export const TALENT_RANGE = 59; // talent baseline spans TALENT_MIN..TALENT_MIN+TALENT_RANGE (roughly 31..90 on the new 20-100 scale)
 
 export function computeTeamTalents(teams) {
   const percentiles = computeHistoricalPercentiles(teams);
@@ -403,21 +403,21 @@ export function computeProgramPrestige(teams) {
 
 function genHitterRatings(battingTalent, rng) {
   return {
-    contact: Math.round(clamp(battingTalent + noise(rng) * 14, 20, 80)),
-    power: Math.round(clamp(battingTalent + noise(rng) * 16, 20, 80)),
-    eye: Math.round(clamp(battingTalent + noise(rng) * 14, 20, 80)),
+    contact: Math.round(clamp(battingTalent + noise(rng) * 19, 20, 100)),
+    power: Math.round(clamp(battingTalent + noise(rng) * 21, 20, 100)),
+    eye: Math.round(clamp(battingTalent + noise(rng) * 19, 20, 100)),
   };
 }
 
-const PITCHER_ROLE_SHIFT = { SP1: 7, SP2: 2, SP3: -3, RP: 0 };
+const PITCHER_ROLE_SHIFT = { SP1: 9, SP2: 3, SP3: -4, RP: 0 };
 
 function genPitcherRatings(pitchingTalent, rng, role) {
   const shift = PITCHER_ROLE_SHIFT[role] ?? 0;
-  const base = pitchingTalent + shift + noise(rng) * 6;
+  const base = pitchingTalent + shift + noise(rng) * 8;
   return {
-    stuff: Math.round(clamp(base + noise(rng) * 12, 20, 80)),
-    control: Math.round(clamp(base + noise(rng) * 12, 20, 80)),
-    movement: Math.round(clamp(base + noise(rng) * 12, 20, 80)),
+    stuff: Math.round(clamp(base + noise(rng) * 16, 20, 100)),
+    control: Math.round(clamp(base + noise(rng) * 16, 20, 100)),
+    movement: Math.round(clamp(base + noise(rng) * 16, 20, 100)),
   };
 }
 
@@ -625,8 +625,53 @@ function nextClass(cls) {
 // star rating from being identical.
 export function starsToTalent(stars, rng) {
   const base = TALENT_MIN + ((stars - 1) / 4) * TALENT_RANGE;
+  const noise = (rng() - 0.5) * 11;
+  return Math.max(TALENT_MIN - 8, Math.min(TALENT_MIN + TALENT_RANGE + 8, base + noise));
+}
+
+// How far below their eventual ceiling a freshman starts. Elite prospects
+// (qualityFraction near 1, i.e. a 5-star recruit) arrive nearly finished
+// products; the further down the recruiting scale, the bigger a project
+// they are -- more room to grow, but also less certain they ever will.
+export function developmentGap(qualityFraction, rng) {
+  const maxGap = 27;
+  const minGap = 3;
+  const base = maxGap - qualityFraction * (maxGap - minGap);
   const noise = (rng() - 0.5) * 8;
-  return Math.max(TALENT_MIN - 6, Math.min(TALENT_MIN + TALENT_RANGE + 6, base + noise));
+  return Math.max(1, base + noise);
+}
+
+// One year's development roll for a returning player: most years bring
+// modest growth, but it's a real roll -- some years a player plateaus
+// entirely, a smaller share regress slightly, and a smaller share still
+// break out with a big jump. Growth is front-loaded (FR->SO the biggest,
+// JR->SR the smallest) matching how physical/skill development in college
+// athletes tends to taper as they approach their final form.
+const DEVELOPMENT_CURVE = {
+  'FR-SO': { regress: 0.08, plateau: 0.15, avgGrowth: 6.7, variance: 5.3 },
+  'SO-JR': { regress: 0.08, plateau: 0.20, avgGrowth: 4.7, variance: 4 },
+  'JR-SR': { regress: 0.10, plateau: 0.30, avgGrowth: 2.7, variance: 2.7 },
+};
+export function developmentDelta(transition, rng) {
+  const params = DEVELOPMENT_CURVE[transition] || DEVELOPMENT_CURVE['SO-JR'];
+  const roll = rng();
+  if (roll < params.regress) return -(1.3 + rng() * 4);
+  if (roll < params.regress + params.plateau) return 0;
+  const breakout = rng() < 0.15;
+  const growth = params.avgGrowth + (rng() - 0.3) * params.variance;
+  return Math.max(0.7, breakout ? growth * 1.8 : growth);
+}
+
+// Applies a development delta to every attribute of a ratings object
+// uniformly (preserving the player's "shape" -- whichever attribute was
+// their best stays their best, it's the overall level that rises), capped
+// at a generous margin above their tracked ceiling so natural per-attribute
+// spread can still poke a little above the scalar peak.
+function applyDevelopment(ratings, delta, peak) {
+  const cap = Math.min(100, peak + 13);
+  Object.keys(ratings).forEach((key) => {
+    ratings[key] = Math.round(clamp(ratings[key] + delta, 20, cap));
+  });
 }
 
 export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRecruits = []) {
@@ -640,10 +685,12 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
   [...roster.lineup, ...roster.bench].forEach((p) => {
     if (!byId.has(p.id)) byId.set(p.id, { id: p.id, name: p.name, class: p.class, number: p.number });
     byId.get(p.id).hitterRatings = p.ratings;
+    byId.get(p.id).hittingPeak = p.hittingPeak;
   });
   roster.pitchers.forEach((p) => {
     if (!byId.has(p.id)) byId.set(p.id, { id: p.id, name: p.name, class: p.class, number: p.number });
     byId.get(p.id).pitcherRatings = p.ratings;
+    byId.get(p.id).pitchingPeak = p.pitchingPeak;
   });
 
   const returning = [];
@@ -655,6 +702,27 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
       if (p.pitcherRatings) graduatedPitcherSlots += 1;
       else graduatedHitterSlots += 1;
     } else {
+      // Development: a real year-to-year roll, not a guaranteed bump.
+      // Players who came from before this system existed (or from the
+      // initial roster, which doesn't track a ceiling) get one assigned
+      // now, based on where they already are -- some realistic room to
+      // keep growing, without retroactively changing who they are today.
+      const transition = `${p.class}-${nc}`;
+      const delta = developmentDelta(transition, rng);
+      if (p.hitterRatings) {
+        if (p.hittingPeak === undefined) {
+          const avg = (p.hitterRatings.contact + p.hitterRatings.power + p.hitterRatings.eye) / 3;
+          p.hittingPeak = Math.min(97, avg + 8 + rng() * 13);
+        }
+        applyDevelopment(p.hitterRatings, delta, p.hittingPeak);
+      }
+      if (p.pitcherRatings) {
+        if (p.pitchingPeak === undefined) {
+          const avg = (p.pitcherRatings.stuff + p.pitcherRatings.control + p.pitcherRatings.movement) / 3;
+          p.pitchingPeak = Math.min(97, avg + 8 + rng() * 13);
+        }
+        applyDevelopment(p.pitcherRatings, delta, p.pitchingPeak);
+      }
       p.class = nc;
       returning.push(p);
     }
@@ -675,14 +743,18 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
   for (let i = 0; i < graduatedHitterSlots; i++) {
     const signed = availableHitterRecruits[i];
     if (signed) {
+      const peak = starsToTalent(signed.stars, rng) + 7; // compensates for time spent below peak during development
+      const gap = developmentGap(signed.stars / 5, rng);
       recruitedHitters.push({
         id: nextId(team.name), name: signed.name, class: 'FR',
-        hitterRatings: genHitterRatings(starsToTalent(signed.stars, rng), rng),
+        hitterRatings: genHitterRatings(peak - gap, rng), hittingPeak: peak,
       });
     } else {
+      const peak = talents.batting + 7 + rng() * 8; // unrated walk-on-type addition -- modest, uncertain upside
+      const gap = developmentGap(0.4, rng);
       recruitedHitters.push({
         id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
-        hitterRatings: genHitterRatings(talents.batting, rng),
+        hitterRatings: genHitterRatings(peak - gap, rng), hittingPeak: peak,
       });
     }
   }
@@ -691,24 +763,30 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
     const signedPitcher = availablePitcherRecruits[i];
     const signedTwoWay = !signedPitcher ? availableTwoWayRecruits[twoWayIdx] : null;
     if (signedPitcher) {
+      const peak = starsToTalent(signedPitcher.stars, rng) + 7;
+      const gap = developmentGap(signedPitcher.stars / 5, rng);
       recruitedPitchers.push({
         id: nextId(team.name), name: signedPitcher.name, class: 'FR',
-        pitcherRatings: genPitcherRatings(starsToTalent(signedPitcher.stars, rng), rng, 'RP'),
+        pitcherRatings: genPitcherRatings(peak - gap, rng, 'RP'), pitchingPeak: peak,
       });
     } else if (signedTwoWay) {
       twoWayIdx += 1;
-      const talentBase = starsToTalent(signedTwoWay.stars, rng);
+      const peak = starsToTalent(signedTwoWay.stars, rng) + 7;
+      const gap = developmentGap(signedTwoWay.stars / 5, rng);
+      const startTalent = peak - gap;
       recruitedPitchers.push({
         id: nextId(team.name), name: signedTwoWay.name, class: 'FR',
-        pitcherRatings: genPitcherRatings(talentBase, rng, 'RP'),
-        hitterRatings: genHitterRatings(talentBase, rng),
+        pitcherRatings: genPitcherRatings(startTalent, rng, 'RP'), pitchingPeak: peak,
+        hitterRatings: genHitterRatings(startTalent, rng), hittingPeak: peak,
       });
     } else {
+      const peak = talents.pitching + 7 + rng() * 8;
+      const gap = developmentGap(0.4, rng);
       const p = {
         id: nextId(team.name), name: randomName(rng, usedNames), class: 'FR',
-        pitcherRatings: genPitcherRatings(talents.pitching, rng, 'RP'),
+        pitcherRatings: genPitcherRatings(peak - gap, rng, 'RP'), pitchingPeak: peak,
       };
-      if (rng() < 0.15) p.hitterRatings = genHitterRatings(talents.batting, rng);
+      if (rng() < 0.15) { p.hitterRatings = genHitterRatings(peak - gap, rng); p.hittingPeak = peak; }
       recruitedPitchers.push(p);
     }
   }
@@ -724,16 +802,17 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
     twoWay: !!p.hitterRatings,
     role: i === 0 ? 'SP1' : i === 1 ? 'SP2' : i === 2 ? 'SP3' : 'RP',
     ratings: p.pitcherRatings,
+    pitchingPeak: p.pitchingPeak,
   }));
 
   // --- Hitting pool: pure hitters (returning + recruited) plus two-way pitchers ---
   const pureHitterPool = [...returning.filter((p) => p.hitterRatings && !p.pitcherRatings), ...recruitedHitters];
   const twoWayCandidates = pitchers.filter((p) => p.twoWay).map((p) => {
     const source = pitcherPool.find((x) => x.id === p.id);
-    return { id: p.id, name: p.name, class: p.class, twoWay: true, pitcherRef: p, ratings: source.hitterRatings };
+    return { id: p.id, name: p.name, class: p.class, twoWay: true, pitcherRef: p, ratings: source.hitterRatings, hittingPeak: source.hittingPeak };
   });
   const pool = [
-    ...pureHitterPool.map((p) => ({ id: p.id, name: p.name, class: p.class, twoWay: false, ratings: p.hitterRatings })),
+    ...pureHitterPool.map((p) => ({ id: p.id, name: p.name, class: p.class, twoWay: false, ratings: p.hitterRatings, hittingPeak: p.hittingPeak })),
     ...twoWayCandidates,
   ];
 
@@ -759,12 +838,12 @@ export function advanceRosterOneSeason(roster, team, talents, seed = 1, signedRe
   const lineup = lineupOrder.map((p, i) => ({
     id: p.id, name: p.name, class: p.class, twoWay: p.twoWay,
     pitcherRole: p.twoWay ? p.pitcherRef.role : null,
-    battingOrder: i + 1, position: p.position, ratings: p.ratings,
+    battingOrder: i + 1, position: p.position, ratings: p.ratings, hittingPeak: p.hittingPeak,
   }));
 
   const bench = benchPool.map((p, i) => ({
     id: p.id, name: p.name, class: p.class, twoWay: p.twoWay,
-    position: BENCH_POSITIONS[i % BENCH_POSITIONS.length], ratings: p.ratings,
+    position: BENCH_POSITIONS[i % BENCH_POSITIONS.length], ratings: p.ratings, hittingPeak: p.hittingPeak,
   }));
 
   // Numbers: returning players keep theirs; recruits get assigned from

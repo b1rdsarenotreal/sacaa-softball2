@@ -1426,7 +1426,7 @@ function computeLeagueStats() {
     const result = g.result.boxscore ? g.result : regenerateGameResult(g);
     [['away', g.away, g.home], ['home', g.home, g.away]].forEach(([side, teamName, opponentName]) => {
       const tt = teamTotals[teamName];
-      const oppTalent = teamTalents[opponentName] || { batting: 50, pitching: 50 };
+      const oppTalent = teamTalents[opponentName] || { batting: 60, pitching: 60 };
       result.boxscore[side].batting.forEach((b) => {
         tt.ab += b.ab; tt.h += b.h; tt.bb += b.bb; tt.r += b.r; tt.rbi += b.rbi;
         tt.hr += b.hr; tt.doubles += b.doubles; tt.triples += b.triples;
@@ -1489,11 +1489,11 @@ function computeLeagueStats() {
     const entries = Object.entries(p.positionCounts);
     p.position = entries.length > 0 ? entries.sort((a, b) => b[1] - a[1])[0][0] : 'UTIL';
     delete p.positionCounts;
-    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 50;
+    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 60;
     delete p.sosWeightedSum; delete p.sosWeight;
   });
   playerPitchingArr.forEach((p) => {
-    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 50;
+    p.sos = p.sosWeight > 0 ? p.sosWeightedSum / p.sosWeight : 60;
     delete p.sosWeightedSum; delete p.sosWeight;
   });
   computeWAR(playerBattingArr, playerPitchingArr);
@@ -1538,11 +1538,11 @@ function computeWAR(playerBatting, playerPitching) {
       const runsAboveReplacement = runsAboveAvg + REPLACEMENT_RUNS_PER_PA * p._pa;
       const rawWar = runsAboveReplacement / RUNS_PER_WIN;
       // Strength of schedule adjustment: facing above-average pitching (sos
-      // > 50, the midpoint of the 28-72 talent scale) means these stats
+      // > 60, the midpoint of the 31-90 talent scale) means these stats
       // came against tougher competition and are worth a bit more; below-
       // average pitching discounts them. Clamped so a small sample's SOS
       // swing can't produce an absurd adjustment.
-      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 50) / 100));
+      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 60) / 133.33));
       p.war = rawWar * sosMultiplier;
     } else {
       p.war = 0;
@@ -1565,7 +1565,7 @@ function computeWAR(playerBatting, playerPitching) {
       // Same idea for pitchers: sos here is the average batting strength
       // they faced, so a tough-hitting schedule earns a boost and a soft
       // one gets discounted.
-      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 50) / 100));
+      const sosMultiplier = Math.max(0.7, Math.min(1.3, 1 + (p.sos - 60) / 133.33));
       p.war = rawWar * sosMultiplier;
     } else {
       p.war = 0;
@@ -2429,12 +2429,12 @@ function openPlayerModal(teamName, playerId) {
       <div>
         <h2>#${primary.number} ${primary.name}${isTwoWay ? ' <span class="two-way-tag">TW</span>' : ''}</h2>
         <p class="tp-sub">${primary.class} · ${roleLabel} · ${teamLink(teamName)}</p>
-        <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate${sosParts.length ? ` · ${sosParts.join(' · ')}, 50 = league-average schedule` : ''})</span></p>
+        <p class="tp-sub tp-tiers">${playerWar.toFixed(1)} WAR this season <span class="view-note">(simplified estimate${sosParts.length ? ` · ${sosParts.join(' · ')}, 60 = league-average schedule` : ''})</span></p>
         ${awardBadgesHTML}
       </div>
     </div>
 
-    <div class="tp-schedule-title">Ratings <span class="view-note">20-80 scale, 50 = league average</span></div>
+    <div class="tp-schedule-title">Ratings <span class="view-note">20-100 scale, 60 = league average</span></div>
     <div class="tp-roster-tables">
       ${hitterInfo ? `
       <table class="standings-table tp-mini-table">
@@ -2759,7 +2759,7 @@ function openTeamModal(name, yearOverride) {
 
       <div data-inpage-panel="roster" style="display:none">
         ${hasRoster ? `
-        <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-80 scale, 50 = league average</span></div>
+        <div class="tp-schedule-title">Roster (${rosterUniqueCount}) <span class="view-note">ratings on a 20-100 scale, 60 = league average</span></div>
         <div class="tp-roster-tables">
           <table class="standings-table tp-mini-table">
             <thead><tr><th>#</th><th>Hitter</th><th>Cl</th><th>Pos</th><th>Contact</th><th>Power</th><th>Eye</th></tr></thead>

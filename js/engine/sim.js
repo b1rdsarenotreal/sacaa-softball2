@@ -12,7 +12,7 @@ function clamp(x, lo, hi) {
 }
 
 // Ratings drive every plate appearance now (Contact/Power/Eye for batters,
-// Stuff/Control/Movement for pitchers, all on a 20-80 scale, mean 50). This
+// Stuff/Control/Movement for pitchers, all on a 20-100 scale, mean 60). This
 // replaced an earlier stat-multiplier model that could stack multiple
 // multiplicative factors and produce unrealistic blowouts against weak
 // pitching staffs; sigmoid-bounded rating differentials are numerically
@@ -40,27 +40,31 @@ export function computeLeagueAverages(teams) {
 function simulatePA(batter, pitcher, rng) {
   const br = batter.ratings;
   const pr = pitcher.ratings;
+  const SCALE = 4 / 3; // 20-100 scale is (100-20)/(80-20) = 4/3 wider than the original 20-80 scale this was tuned on
 
   // Strikeout: pitcher Stuff vs batter Contact.
-  const kDiff = (pr.stuff - br.contact) / 10;
+  const kDiff = (pr.stuff - br.contact) / (10 * SCALE);
   const pK = clamp(sigmoid(0.32 * kDiff - 1.58), 0.06, 0.35);
   if (rng() < pK) return 'K';
 
   // Walk: batter Eye vs pitcher Control (conditioned on not-K).
-  const eyeDiff = (br.eye - pr.control) / 10;
+  const eyeDiff = (br.eye - pr.control) / (10 * SCALE);
   const pBB = clamp(sigmoid(0.32 * eyeDiff - 2.35), 0.02, 0.18);
   if (rng() < pBB) return 'BB';
 
   // Ball in play: batter Contact vs pitcher Movement decides hit vs out.
-  const contactDiff = (br.contact - pr.movement) / 10;
+  const contactDiff = (br.contact - pr.movement) / (10 * SCALE);
   const pHitOnBip = clamp(sigmoid(0.32 * contactDiff - 0.85), 0.18, 0.42);
   if (rng() >= pHitOnBip) return 'OUT';
 
-  // It's a hit -- Power decides the extra-base split.
+  // It's a hit -- Power decides the extra-base split. 60 is the new scale's
+  // league-average point (was 50 on the old 20-80 scale); the per-point
+  // sensitivity is divided by SCALE so the same relative power difference
+  // produces the same HR/double rates as before.
   const power = br.power;
-  const pHR = clamp(0.06 + (power - 50) * 0.0035, 0.018, 0.2);
+  const pHR = clamp(0.06 + (power - 60) * (0.0035 / SCALE), 0.018, 0.2);
   const pTriple = 0.02;
-  const pDouble = clamp(0.18 + (power - 50) * 0.003, 0.08, 0.3);
+  const pDouble = clamp(0.18 + (power - 60) * (0.003 / SCALE), 0.08, 0.3);
   const pSingle = clamp(1 - pHR - pTriple - pDouble, 0.4, 0.9);
   const total = pHR + pTriple + pDouble + pSingle;
 
